@@ -63,24 +63,19 @@ repo_gpgcheck=1
 gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
 EOF
 
-sudo yum install -y yum-utils
-sudo yum-config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
-sudo yum-config-manager --save --setopt=docker-ce-stable.module_hotfixes=true >/dev/null
-
 
 sudo yum install -y \
 	yum-plugin-versionlock \
 	device-mapper-persistent-data \
 	lvm2
-sudo yum versionlock delete docker-ce docker-ce-cli kubelet kubeadm kubectl kubernetes-cni || true
+sudo yum versionlock delete kubelet kubeadm kubectl kubernetes-cni || true
 
 sudo yum install -y \
 	kubelet-v1.17.4 \
 	kubeadm-v1.17.4 \
 	kubectl-v1.17.4 \
-	kubernetes-cni-0.8.6 \
-	docker-ce-19.03.12-3.el7 docker-ce-cli-19.03.12-3.el7
-sudo yum versionlock add docker-ce docker-ce-cli kubelet kubeadm kubectl kubernetes-cni
+	kubernetes-cni-0.8.6
+sudo yum versionlock add kubelet kubeadm kubectl kubernetes-cni
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now docker
