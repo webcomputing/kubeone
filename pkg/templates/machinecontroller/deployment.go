@@ -69,6 +69,9 @@ func Deploy(s *state.State) error {
 	ctx := context.Background()
 
 	image := s.Cluster.RegistryConfiguration.ImageRegistry(MachineControllerImageRegistry) + MachineControllerImage + MachineControllerTag
+	if s.Cluster.MachineController.Image != "" {
+		image = s.Cluster.MachineController.Image
+	}
 
 	deployment, err := machineControllerDeployment(s.Cluster, s.CredentialsFilePath, image, s.PauseImage)
 	if err != nil {

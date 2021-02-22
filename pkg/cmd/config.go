@@ -77,7 +77,8 @@ type printOpts struct {
 	EnableMetricsServer     bool `longflag:"enable-metrics-server"`
 	EnableOpenIDConnect     bool `longflag:"enable-openid-connect"`
 
-	DeployMachineController bool `longflag:"deploy-machine-controller"`
+	DeployMachineController bool   `longflag:"deploy-machine-controller"`
+	ImageMachineController  string `longflag:"image-machine-controller"`
 }
 
 // configCmd setups the config command
@@ -170,6 +171,7 @@ func printCmd() *cobra.Command {
 
 	// MachineController
 	cmd.Flags().BoolVar(&opts.DeployMachineController, longFlagName(opts, "DeployMachineController"), true, "deploy kubermatic machine-controller")
+	cmd.Flags().StringVar(&opts.ImageMachineController, longFlagName(opts, "ImageMachineController"), "", "Do not overwrite image for machine controller")
 
 	return cmd
 }
@@ -388,6 +390,10 @@ func createAndPrintManifest(printOptions *printOpts) error {
 	// machine-controller
 	if !printOptions.DeployMachineController {
 		cfg.Set(yamled.Path{"machineController", "deploy"}, printOptions.DeployMachineController)
+	}
+
+	if len(printOptions.ImageMachineController) != 0 {
+		cfg.Set(yamled.Path{"machineController", "image"}, printOptions.ImageMachineController)
 	}
 
 	// Print the manifest
@@ -838,6 +844,7 @@ addons:
 # case, anything you configure in your "workers" sections is ignored.
 machineController:
   deploy: {{ .DeployMachineController }}
+  image: '{{ .ImageMachineController }}'
 
 # Proxy is used to configure HTTP_PROXY, HTTPS_PROXY and NO_PROXY
 # for Docker daemon and kubelet, and to be used when provisioning cluster

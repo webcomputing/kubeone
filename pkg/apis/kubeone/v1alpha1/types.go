@@ -207,7 +207,8 @@ type NetworkConfig struct {
 
 // MachineControllerConfig configures kubermatic machine-controller deployment
 type MachineControllerConfig struct {
-	Deploy bool `json:"deploy"`
+	Deploy bool   `json:"deploy"`
+	Image  string `json:"image"`
 	// Provider is provider to be used for machine-controller
 	// Defaults and must be same as chosen cloud provider, unless cloud provider is set to None
 	Provider CloudProviderName `json:"provider"`

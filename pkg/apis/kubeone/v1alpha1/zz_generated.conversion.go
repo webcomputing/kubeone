@@ -589,12 +589,14 @@ func autoConvert_kubeone_KubeOneCluster_To_v1alpha1_KubeOneCluster(in *kubeone.K
 
 func autoConvert_v1alpha1_MachineControllerConfig_To_kubeone_MachineControllerConfig(in *MachineControllerConfig, out *kubeone.MachineControllerConfig, s conversion.Scope) error {
 	out.Deploy = in.Deploy
+	out.Image = in.Image
 	// WARNING: in.Provider requires manual conversion: does not exist in peer-type
 	return nil
 }
 
 func autoConvert_kubeone_MachineControllerConfig_To_v1alpha1_MachineControllerConfig(in *kubeone.MachineControllerConfig, out *MachineControllerConfig, s conversion.Scope) error {
 	out.Deploy = in.Deploy
+	out.Image = in.Image
 	return nil
 }
 

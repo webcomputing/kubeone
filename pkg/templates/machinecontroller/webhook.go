@@ -72,6 +72,9 @@ func DeployWebhookConfiguration(s *state.State) error {
 	}
 
 	image := s.Cluster.RegistryConfiguration.ImageRegistry(MachineControllerImageRegistry) + MachineControllerImage + WebhookTag
+	if s.Cluster.MachineController.Image != "" {
+		image = s.Cluster.MachineController.Image
+	}
 
 	deployment, err := webhookDeployment(s.Cluster, s.CredentialsFilePath, image)
 	if err != nil {

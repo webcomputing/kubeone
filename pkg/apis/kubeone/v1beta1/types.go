@@ -343,7 +343,8 @@ type ProviderStaticNetworkConfig struct {
 // MachineControllerConfig configures kubermatic machine-controller deployment
 type MachineControllerConfig struct {
 	// Deploy
-	Deploy bool `json:"deploy,omitempty"`
+	Deploy bool   `json:"deploy,omitempty"`
+	Image  string `json:"image,omitempty"`
 }
 
 // Features controls what features will be enabled on the cluster
