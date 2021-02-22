@@ -22,6 +22,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"k8c.io/kubeone/pkg/apis/kubeone"
 	"k8c.io/kubeone/pkg/clientutil"
 	"k8c.io/kubeone/pkg/credentials"
 	"k8c.io/kubeone/pkg/state"
@@ -48,10 +49,11 @@ func ensureHetzner(s *state.State) error {
 
 	ctx := context.Background()
 	image := s.Cluster.RegistryConfiguration.ImageRegistry(hetznerImageRegistry) + hetznerImage
+	proxyConfig := s.Cluster.Proxy
 	k8sobject := []runtime.Object{
 		hetznerServiceAccount(),
 		hetznerClusterRoleBinding(),
-		hetznerDeployment(s.Cluster.CloudProvider.Hetzner.NetworkID, s.Cluster.ClusterNetwork.PodSubnet, image),
+		hetznerDeployment(s.Cluster.CloudProvider.Hetzner.NetworkID, s.Cluster.ClusterNetwork.PodSubnet, image, proxyConfig),
 	}
 
 	withLabel := clientutil.WithComponentLabel(ccmComponentLabel)
@@ -93,7 +95,7 @@ func hetznerClusterRoleBinding() *rbacv1.ClusterRoleBinding {
 	}
 }
 
-func hetznerDeployment(networkID, podSubnet, image string) *appsv1.Deployment {
+func hetznerDeployment(networkID, podSubnet, image string, proxyConfig kubeone.ProxyConfig) *appsv1.Deployment {
 	var (
 		replicas  int32 = 1
 		revisions int32 = 2
@@ -103,11 +105,49 @@ func hetznerDeployment(networkID, podSubnet, image string) *appsv1.Deployment {
 			"--leader-elect=false",
 			"--allow-untagged-cloud",
 		}
+		envVar = []corev1.EnvVar{
+			{
+				Name: "NODE_NAME",
+				ValueFrom: &corev1.EnvVarSource{
+					FieldRef: &corev1.ObjectFieldSelector{
+						FieldPath: "spec.nodeName",
+					},
+				},
+			},
+			{
+				Name: "HCLOUD_TOKEN",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: credentials.SecretName,
+						},
+						Key: credentials.HetznerTokenKeyMC,
+					},
+				},
+			},
+			{
+				Name:  "HCLOUD_NETWORK",
+				Value: networkID,
+			},
+		}
 	)
+
 	if len(networkID) > 0 {
 		cmd = append(cmd, "--allocate-node-cidrs=true")
 		cmd = append(cmd, fmt.Sprintf("--cluster-cidr=%s", podSubnet))
 	}
+
+	// Add proxy variables
+	envVar = append(envVar,
+		corev1.EnvVar{
+			Name:  "HTTPS_PROXY",
+			Value: proxyConfig.HTTPS,
+		},
+		corev1.EnvVar{
+			Name:  "NO_PROXY",
+			Value: proxyConfig.NoProxy,
+		},
+	)
 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -157,31 +197,7 @@ func hetznerDeployment(networkID, podSubnet, image string) *appsv1.Deployment {
 							Name:    "hcloud-cloud-controller-manager",
 							Image:   image,
 							Command: cmd,
-							Env: []corev1.EnvVar{
-								{
-									Name: "NODE_NAME",
-									ValueFrom: &corev1.EnvVarSource{
-										FieldRef: &corev1.ObjectFieldSelector{
-											FieldPath: "spec.nodeName",
-										},
-									},
-								},
-								{
-									Name: "HCLOUD_TOKEN",
-									ValueFrom: &corev1.EnvVarSource{
-										SecretKeyRef: &corev1.SecretKeySelector{
-											LocalObjectReference: corev1.LocalObjectReference{
-												Name: credentials.SecretName,
-											},
-											Key: credentials.HetznerTokenKeyMC,
-										},
-									},
-								},
-								{
-									Name:  "HCLOUD_NETWORK",
-									Value: networkID,
-								},
-							},
+							Env:     envVar,
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
 									corev1.ResourceCPU:    resource.MustParse("100m"),
