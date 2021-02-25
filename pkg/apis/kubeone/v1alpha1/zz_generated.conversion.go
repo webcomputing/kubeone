@@ -782,6 +782,7 @@ func autoConvert_v1alpha1_ProviderSpec_To_kubeone_ProviderSpec(in *ProviderSpec,
 	out.OperatingSystemSpec = *(*json.RawMessage)(unsafe.Pointer(&in.OperatingSystemSpec))
 	out.Network = (*kubeone.ProviderStaticNetworkConfig)(unsafe.Pointer(in.Network))
 	out.OverwriteCloudConfig = (*string)(unsafe.Pointer(in.OverwriteCloudConfig))
+	out.CloudInit = *(*[]json.RawMessage)(unsafe.Pointer(&in.CloudInit))
 	return nil
 }
 
@@ -800,6 +801,7 @@ func autoConvert_kubeone_ProviderSpec_To_v1alpha1_ProviderSpec(in *kubeone.Provi
 	out.OperatingSystemSpec = *(*json.RawMessage)(unsafe.Pointer(&in.OperatingSystemSpec))
 	out.Network = (*NetworkConfig)(unsafe.Pointer(in.Network))
 	out.OverwriteCloudConfig = (*string)(unsafe.Pointer(in.OverwriteCloudConfig))
+	out.CloudInit = *(*[]json.RawMessage)(unsafe.Pointer(&in.CloudInit))
 	return nil
 }
 

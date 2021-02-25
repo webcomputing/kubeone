@@ -186,6 +186,8 @@ type ProviderSpec struct {
 	OperatingSystem     string            `json:"operatingSystem"`
 	OperatingSystemSpec json.RawMessage   `json:"operatingSystemSpec"`
 
+	CloudInit []json.RawMessage `json:"cloudInit"`
+
 	// +optional
 	Network *NetworkConfig `json:"network,omitempty"`
 

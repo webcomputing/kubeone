@@ -843,6 +843,11 @@ func (in *ProviderSpec) DeepCopyInto(out *ProviderSpec) {
 		*out = new(string)
 		**out = **in
 	}
+	if in.CloudInit != nil {
+		in, out := &in.CloudInit, &out.CloudInit
+		*out = make([]json.RawMessage, len(*in))
+		copy(*out, *in)
+	}
 	return
 }
 
