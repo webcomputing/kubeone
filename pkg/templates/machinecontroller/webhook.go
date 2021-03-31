@@ -31,12 +31,11 @@ import (
 	"k8c.io/kubeone/pkg/credentials"
 	"k8c.io/kubeone/pkg/state"
 
-	admissionregistrationv1beta1 "k8s.io/api/admissionregistration/v1beta1"
+	admissionregistration "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	certutil "k8s.io/client-go/util/cert"
@@ -83,7 +82,7 @@ func DeployWebhookConfiguration(s *state.State) error {
 
 	ctx := context.Background()
 
-	k8sobjects := []runtime.Object{
+	k8sobjects := []dynclient.Object{
 		deployment,
 		service(),
 		servingCert,
@@ -128,6 +127,16 @@ func webhookDeployment(cluster *kubeoneapi.KubeOneCluster, credentialsFilePath, 
 	)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to get env var bindings for a secret")
+	}
+
+	args := []string{
+		"-logtostderr",
+		"-v", "4",
+		"-listen-address", fmt.Sprintf("0.0.0.0:%d", WebhookPort),
+	}
+
+	if cluster.CloudProvider.External {
+		args = append(args, "-node-external-cloud-provider")
 	}
 
 	return &appsv1.Deployment{
@@ -189,15 +198,11 @@ func webhookDeployment(cluster *kubeoneapi.KubeOneCluster, credentialsFilePath, 
 					},
 					Containers: []corev1.Container{
 						{
-							Name:            "machine-controller-webhook",
-							Image:           image,
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							Command:         []string{"/usr/local/bin/webhook"},
-							Args: []string{
-								"-logtostderr",
-								"-v", "4",
-								"-listen-address", fmt.Sprintf("0.0.0.0:%d", WebhookPort),
-							},
+							Name:                     "machine-controller-webhook",
+							Image:                    image,
+							ImagePullPolicy:          corev1.PullIfNotPresent,
+							Command:                  []string{"/usr/local/bin/webhook"},
+							Args:                     args,
 							Env:                      envVar,
 							TerminationMessagePath:   corev1.TerminationMessagePathDefault,
 							TerminationMessagePolicy: corev1.TerminationMessageReadFile,
@@ -325,36 +330,36 @@ func tlsServingCertificate(caKey crypto.Signer, caCert *x509.Certificate) (*core
 }
 
 // mutatingwebhookConfiguration returns the MutatingwebhookConfiguration for the machine controler
-func mutatingwebhookConfiguration(caCert *x509.Certificate) *admissionregistrationv1beta1.MutatingWebhookConfiguration {
-	sideEffectsNone := admissionregistrationv1beta1.SideEffectClassNone
+func mutatingwebhookConfiguration(caCert *x509.Certificate) *admissionregistration.MutatingWebhookConfiguration {
+	sideEffectsNone := admissionregistration.SideEffectClassNone
 
-	return &admissionregistrationv1beta1.MutatingWebhookConfiguration{
+	return &admissionregistration.MutatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "machine-controller.kubermatic.io",
 			Namespace: WebhookNamespace,
 		},
-		Webhooks: []admissionregistrationv1beta1.MutatingWebhook{
+		Webhooks: []admissionregistration.MutatingWebhook{
 			{
 				Name:                    "machine-controller.kubermatic.io-machinedeployments",
 				NamespaceSelector:       &metav1.LabelSelector{},
-				FailurePolicy:           failurePolicyPtr(admissionregistrationv1beta1.Fail),
+				FailurePolicy:           failurePolicyPtr(admissionregistration.Fail),
 				SideEffects:             &sideEffectsNone,
 				AdmissionReviewVersions: []string{"v1", "v1beta1"},
-				Rules: []admissionregistrationv1beta1.RuleWithOperations{
+				Rules: []admissionregistration.RuleWithOperations{
 					{
-						Operations: []admissionregistrationv1beta1.OperationType{
-							admissionregistrationv1beta1.Create,
-							admissionregistrationv1beta1.Update,
+						Operations: []admissionregistration.OperationType{
+							admissionregistration.Create,
+							admissionregistration.Update,
 						},
-						Rule: admissionregistrationv1beta1.Rule{
+						Rule: admissionregistration.Rule{
 							APIGroups:   []string{"cluster.k8s.io"},
 							APIVersions: []string{"v1alpha1"},
 							Resources:   []string{"machinedeployments"},
 						},
 					},
 				},
-				ClientConfig: admissionregistrationv1beta1.WebhookClientConfig{
-					Service: &admissionregistrationv1beta1.ServiceReference{
+				ClientConfig: admissionregistration.WebhookClientConfig{
+					Service: &admissionregistration.ServiceReference{
 						Name:      WebhookName,
 						Namespace: WebhookNamespace,
 						Path:      strPtr("/machinedeployments"),
@@ -365,24 +370,24 @@ func mutatingwebhookConfiguration(caCert *x509.Certificate) *admissionregistrati
 			{
 				Name:                    "machine-controller.kubermatic.io-machines",
 				NamespaceSelector:       &metav1.LabelSelector{},
-				FailurePolicy:           failurePolicyPtr(admissionregistrationv1beta1.Fail),
+				FailurePolicy:           failurePolicyPtr(admissionregistration.Fail),
 				SideEffects:             &sideEffectsNone,
 				AdmissionReviewVersions: []string{"v1", "v1beta1"},
-				Rules: []admissionregistrationv1beta1.RuleWithOperations{
+				Rules: []admissionregistration.RuleWithOperations{
 					{
-						Operations: []admissionregistrationv1beta1.OperationType{
-							admissionregistrationv1beta1.Create,
-							admissionregistrationv1beta1.Update,
+						Operations: []admissionregistration.OperationType{
+							admissionregistration.Create,
+							admissionregistration.Update,
 						},
-						Rule: admissionregistrationv1beta1.Rule{
+						Rule: admissionregistration.Rule{
 							APIGroups:   []string{"cluster.k8s.io"},
 							APIVersions: []string{"v1alpha1"},
 							Resources:   []string{"machines"},
 						},
 					},
 				},
-				ClientConfig: admissionregistrationv1beta1.WebhookClientConfig{
-					Service: &admissionregistrationv1beta1.ServiceReference{
+				ClientConfig: admissionregistration.WebhookClientConfig{
+					Service: &admissionregistration.ServiceReference{
 						Name:      WebhookName,
 						Namespace: WebhookNamespace,
 						Path:      strPtr("/machines"),
@@ -398,6 +403,6 @@ func strPtr(a string) *string {
 	return &a
 }
 
-func failurePolicyPtr(a admissionregistrationv1beta1.FailurePolicyType) *admissionregistrationv1beta1.FailurePolicyType {
+func failurePolicyPtr(a admissionregistration.FailurePolicyType) *admissionregistration.FailurePolicyType {
 	return &a
 }

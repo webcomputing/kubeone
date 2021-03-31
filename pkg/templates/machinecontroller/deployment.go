@@ -35,7 +35,6 @@ import (
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	dynclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -48,11 +47,11 @@ const (
 	MachineControllerAppLabelValue = "machine-controller"
 	MachineControllerImageRegistry = "docker.io"
 	MachineControllerImage         = "/kubermatic/machine-controller:"
-	MachineControllerTag           = "v1.25.0"
+	MachineControllerTag           = "v1.27.4"
 )
 
-func CRDs() []runtime.Object {
-	return []runtime.Object{
+func CRDs() []dynclient.Object {
+	return []dynclient.Object{
 		machineControllerMachineCRD(),
 		machineControllerClusterCRD(),
 		machineControllerMachineSetCRD(),
@@ -506,6 +505,9 @@ func machineControllerMachineCRD() *apiextensions.CustomResourceDefinition {
 	return &apiextensions.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "machines.cluster.k8s.io",
+			Annotations: map[string]string{
+				"api-approved.kubernetes.io": "unapproved, legacy API",
+			},
 		},
 		Spec: apiextensions.CustomResourceDefinitionSpec{
 			Group: "cluster.k8s.io",
@@ -578,6 +580,9 @@ func machineControllerClusterCRD() *apiextensions.CustomResourceDefinition {
 	return &apiextensions.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "clusters.cluster.k8s.io",
+			Annotations: map[string]string{
+				"api-approved.kubernetes.io": "unapproved, legacy API",
+			},
 		},
 		Spec: apiextensions.CustomResourceDefinitionSpec{
 			Group: "cluster.k8s.io",
@@ -607,6 +612,9 @@ func machineControllerMachineSetCRD() *apiextensions.CustomResourceDefinition {
 	return &apiextensions.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "machinesets.cluster.k8s.io",
+			Annotations: map[string]string{
+				"api-approved.kubernetes.io": "unapproved, legacy API",
+			},
 		},
 		Spec: apiextensions.CustomResourceDefinitionSpec{
 			Group: "cluster.k8s.io",
@@ -684,6 +692,9 @@ func machineControllerMachineDeploymentCRD() *apiextensions.CustomResourceDefini
 	return &apiextensions.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "machinedeployments.cluster.k8s.io",
+			Annotations: map[string]string{
+				"api-approved.kubernetes.io": "unapproved, legacy API",
+			},
 		},
 		Spec: apiextensions.CustomResourceDefinitionSpec{
 			Group: "cluster.k8s.io",
@@ -778,10 +789,6 @@ func machineControllerDeployment(cluster *kubeoneapi.KubeOneCluster, credentials
 		args = append(args, "-node-no-proxy", cluster.Proxy.NoProxy)
 	}
 
-	if cluster.CloudProvider.External {
-		args = append(args, "-external-cloud-provider")
-	}
-
 	insecureRegistry := cluster.RegistryConfiguration.InsecureRegistryAddress()
 	if insecureRegistry != "" {
 		args = append(args, "-node-insecure-registries", insecureRegistry)
@@ -791,10 +798,11 @@ func machineControllerDeployment(cluster *kubeoneapi.KubeOneCluster, credentials
 		hyperkubeImage := cluster.RegistryConfiguration.ImageRegistry("k8s.gcr.io") + "/hyperkube-amd64"
 		poseidonKubeletImage := cluster.RegistryConfiguration.ImageRegistry("quay.io") + "/poseidon/kubelet"
 
-		args = append(args, "-node-hyperkube-image", hyperkubeImage)
-		args = append(args, "-node-kubelet-repository", poseidonKubeletImage)
-
-		args = append(args, "-node-pause-image", pauseImage)
+		args = append(args,
+			"-node-hyperkube-image", hyperkubeImage,
+			"-node-kubelet-repository", poseidonKubeletImage,
+			"-node-pause-image", pauseImage,
+		)
 	}
 
 	envVar, err := credentials.EnvVarBindings(cluster.CloudProvider, credentialsFilePath)
