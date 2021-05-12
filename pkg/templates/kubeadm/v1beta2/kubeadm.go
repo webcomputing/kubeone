@@ -52,6 +52,11 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 	}
 
 	nodeRegistration := newNodeRegistration(s, host)
+	nodeRegistration.IgnorePreflightErrors = []string{
+		"DirAvailable--var-lib-etcd",
+		"DirAvailable--etc-kubernetes-manifests",
+		"ImagePull",
+	}
 
 	bootstrapToken, err := kubeadmv1beta2.NewBootstrapTokenString(s.JoinToken)
 	if err != nil {
@@ -238,6 +243,35 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 		}
 		clusterConfig.APIServer.ExtraVolumes = append(clusterConfig.APIServer.ExtraVolumes, admissionVol)
 	}
+	// this is not exactly as s.EncryptionEnabled(). We need this to be true during the enable/disable or disable/enable transition.
+	if (cluster.Features.EncryptionProviders != nil && cluster.Features.EncryptionProviders.Enable) ||
+		s.LiveCluster.EncryptionConfiguration.Enable {
+		encryptionProvidersVol := kubeadmv1beta2.HostPathMount{
+			Name:      "encryption-providers-conf",
+			HostPath:  "/etc/kubernetes/encryption-providers",
+			MountPath: "/etc/kubernetes/encryption-providers",
+			ReadOnly:  true,
+			PathType:  corev1.HostPathDirectoryOrCreate,
+		}
+		clusterConfig.APIServer.ExtraVolumes = append(clusterConfig.APIServer.ExtraVolumes, encryptionProvidersVol)
+
+		// Handle external KMS case.
+		if s.LiveCluster.CustomEncryptionEnabled() ||
+			s.Cluster.Features.EncryptionProviders != nil && s.Cluster.Features.EncryptionProviders.CustomEncryptionConfiguration != "" {
+			ksmSocket, err := s.GetKMSSocketPath()
+			if err != nil {
+				return nil, err
+			}
+			if ksmSocket != "" {
+				clusterConfig.APIServer.ExtraVolumes = append(clusterConfig.APIServer.ExtraVolumes, kubeadmv1beta2.HostPathMount{
+					Name:      "kms-endpoint",
+					HostPath:  ksmSocket,
+					MountPath: ksmSocket,
+					PathType:  corev1.HostPathSocket,
+				})
+			}
+		}
+	}
 
 	args := kubeadmargs.NewFrom(clusterConfig.APIServer.ExtraArgs)
 	features.UpdateKubeadmClusterConfiguration(cluster.Features, args)
@@ -256,6 +290,10 @@ func NewConfigWorker(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Obje
 	cluster := s.Cluster
 
 	nodeRegistration := newNodeRegistration(s, host)
+	nodeRegistration.IgnorePreflightErrors = []string{
+		"DirAvailable--etc-kubernetes-manifests",
+	}
+
 	controlPlaneEndpoint := fmt.Sprintf("%s:%d", cluster.APIEndpoint.Host, cluster.APIEndpoint.Port)
 
 	joinConfig := &kubeadmv1beta2.JoinConfiguration{

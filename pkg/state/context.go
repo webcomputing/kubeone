@@ -18,6 +18,8 @@ package state
 
 import (
 	"context"
+	"path"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 
@@ -25,21 +27,44 @@ import (
 	"k8c.io/kubeone/pkg/configupload"
 	"k8c.io/kubeone/pkg/runner"
 	"k8c.io/kubeone/pkg/ssh"
+	"k8c.io/kubeone/pkg/templates/images"
 
+	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
 	"k8s.io/client-go/rest"
 	bootstraputil "k8s.io/cluster-bootstrap/token/util"
 	dynclient "sigs.k8s.io/controller-runtime/pkg/client"
+	kyaml "sigs.k8s.io/yaml"
+)
+
+const (
+	defaultEncryptionProvidersFile = "encryption-providers.yaml"
+	customEncryptionProvidersFile  = "custom-encryption-providers.yaml"
 )
 
 func New(ctx context.Context) (*State, error) {
 	joinToken, err := bootstraputil.GenerateBootstrapToken()
-	return &State{
+	s := &State{
 		JoinToken:     joinToken,
 		Connector:     ssh.NewConnector(ctx),
 		Configuration: configupload.NewConfiguration(),
 		Context:       ctx,
 		WorkDir:       "./kubeone",
-	}, err
+	}
+
+	s.Images = images.NewResolver(
+		images.WithOverwriteRegistryGetter(func() string {
+			switch {
+			case s.Cluster == nil:
+				return ""
+			case s.Cluster.RegistryConfiguration == nil:
+				return ""
+			}
+
+			return s.Cluster.RegistryConfiguration.OverwriteRegistry
+		}),
+	)
+
+	return s, err
 }
 
 // State holds together currently test flags and parsed info, along with
@@ -50,6 +75,7 @@ type State struct {
 	Logger                    logrus.FieldLogger
 	Connector                 *ssh.Connector
 	Configuration             *configupload.Configuration
+	Images                    *images.Resolver
 	Runner                    *runner.Runner
 	Context                   context.Context
 	WorkDir                   string
@@ -81,4 +107,55 @@ func (s *State) KubeadmVerboseFlag() string {
 func (s *State) Clone() *State {
 	newState := *s
 	return &newState
+}
+
+func (s *State) ShouldDisableEncryption() bool {
+	return (s.Cluster.Features.EncryptionProviders == nil ||
+		!s.Cluster.Features.EncryptionProviders.Enable) &&
+		s.LiveCluster.EncryptionConfiguration.Enable
+}
+
+func (s *State) ShouldEnableEncryption() bool {
+	return s.Cluster.Features.EncryptionProviders != nil &&
+		s.Cluster.Features.EncryptionProviders.Enable &&
+		!s.LiveCluster.EncryptionConfiguration.Enable
+}
+
+func (s *State) EncryptionEnabled() bool {
+	return s.Cluster.Features.EncryptionProviders != nil &&
+		s.Cluster.Features.EncryptionProviders.Enable &&
+		s.LiveCluster.EncryptionConfiguration.Enable
+}
+
+func (s *State) GetEncryptionProviderConfigName() string {
+	if (s.ShouldEnableEncryption() && s.Cluster.Features.EncryptionProviders.CustomEncryptionConfiguration != "") ||
+		s.LiveCluster.EncryptionConfiguration.Custom {
+		return customEncryptionProvidersFile
+	}
+	return defaultEncryptionProvidersFile
+}
+
+func (s *State) GetKMSSocketPath() (string, error) {
+	config := &apiserverconfigv1.EncryptionConfiguration{}
+	// Custom configuration could be either on cluster side or the cluster configuration file
+	// or both, depending on the enabled, enable/disable situation. We prefer the local configuration.
+	if s.LiveCluster.CustomEncryptionEnabled() {
+		config = s.LiveCluster.EncryptionConfiguration.Config
+	} else {
+		err := kyaml.UnmarshalStrict([]byte(s.Cluster.Features.EncryptionProviders.CustomEncryptionConfiguration), config)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	for _, r := range config.Resources {
+		for _, p := range r.Providers {
+			if p.KMS == nil {
+				continue
+			}
+			return path.Clean(strings.ReplaceAll(p.KMS.Endpoint, "unix:", "")), nil
+		}
+	}
+
+	return "", nil
 }

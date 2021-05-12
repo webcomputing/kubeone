@@ -1,5 +1,5 @@
 /*
-Copyright 2020 The KubeOne Authors.
+Copyright 2021 The KubeOne Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,19 +19,29 @@ package state
 import (
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"k8c.io/kubeone/pkg/apis/kubeone"
+
+	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 type Cluster struct {
-	ControlPlane    []Host
-	StaticWorkers   []Host
-	ExpectedVersion *semver.Version
-	Lock            sync.Mutex
+	ControlPlane            []Host
+	StaticWorkers           []Host
+	ExpectedVersion         *semver.Version
+	EncryptionConfiguration *EncryptionConfiguration
+	Lock                    sync.Mutex
+}
+
+type EncryptionConfiguration struct {
+	Enable bool
+	Config *apiserverconfigv1.EncryptionConfiguration
+	Custom bool
 }
 
 type Host struct {
@@ -44,6 +54,8 @@ type Host struct {
 	// Applicable only for CP nodes
 	APIServer ContainerStatus
 	Etcd      ContainerStatus
+
+	EarliestCertExpiry time.Time
 
 	IsInCluster bool
 	Kubeconfig  []byte
@@ -73,6 +85,27 @@ const (
 /*
 	Cluster level checks
 */
+
+const (
+	x90Days = time.Hour * 24 * 90
+)
+
+// CertsToExpireInLessThen90Days will return true if any of the control plane certificates are to be expired soon (90
+// days).
+func (c *Cluster) CertsToExpireInLessThen90Days() bool {
+	var (
+		now       = time.Now()
+		needRenew bool
+	)
+
+	for _, host := range c.ControlPlane {
+		if !host.EarliestCertExpiry.IsZero() && host.EarliestCertExpiry.Sub(now) <= x90Days {
+			needRenew = true
+		}
+	}
+
+	return needRenew
+}
 
 // IsProvisioned returns is the target cluster provisioned.
 // The cluster is consider provisioned if there is at least one initialized host
@@ -212,6 +245,14 @@ func (c *Cluster) SafeToRepair(targetVersion string) (bool, string) {
 	}
 
 	return true, targetVer.String()
+}
+
+func (c *Cluster) EncryptionEnabled() bool {
+	return c.EncryptionConfiguration != nil && c.EncryptionConfiguration.Enable
+}
+
+func (c *Cluster) CustomEncryptionEnabled() bool {
+	return c.EncryptionEnabled() && c.EncryptionConfiguration.Custom && c.EncryptionConfiguration.Config != nil
 }
 
 /*

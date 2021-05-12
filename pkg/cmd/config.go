@@ -69,13 +69,14 @@ type printOpts struct {
 	HTTPSProxy string `longflag:"proxy-https"`
 	NoProxy    string `longflag:"proxy-no-proxy"`
 
-	EnablePodNodeSelector   bool `longflag:"enable-pod-node-selector"`
-	EnablePodSecurityPolicy bool `longflag:"enable-pod-security-policy"`
-	EnablePodPresets        bool `longflag:"enable-pod-presets"`
-	EnableStaticAuditLog    bool `longflag:"enable-static-audit-log"`
-	EnableDynamicAuditLog   bool `longflag:"enable-dynamic-audit-log"`
-	EnableMetricsServer     bool `longflag:"enable-metrics-server"`
-	EnableOpenIDConnect     bool `longflag:"enable-openid-connect"`
+	EnablePodNodeSelector     bool `longflag:"enable-pod-node-selector"`
+	EnablePodSecurityPolicy   bool `longflag:"enable-pod-security-policy"`
+	EnablePodPresets          bool `longflag:"enable-pod-presets"`
+	EnableStaticAuditLog      bool `longflag:"enable-static-audit-log"`
+	EnableDynamicAuditLog     bool `longflag:"enable-dynamic-audit-log"`
+	EnableMetricsServer       bool `longflag:"enable-metrics-server"`
+	EnableOpenIDConnect       bool `longflag:"enable-openid-connect"`
+	EnableEncryptionProviders bool `longflag:"enable-encryption-providers"`
 
 	DeployMachineController bool   `longflag:"deploy-machine-controller"`
 	ImageMachineController  string `longflag:"image-machine-controller"`
@@ -91,6 +92,7 @@ func configCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 	cmd.AddCommand(printCmd())
 	cmd.AddCommand(migrateCmd(rootFlags))
 	cmd.AddCommand(machinedeploymentsCmd(rootFlags))
+	cmd.AddCommand(imagesCmd(rootFlags))
 
 	return cmd
 }
@@ -168,6 +170,7 @@ func printCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.EnableDynamicAuditLog, longFlagName(opts, "EnableDynamicAuditLog"), false, "enable DynamicAuditLog")
 	cmd.Flags().BoolVar(&opts.EnableMetricsServer, longFlagName(opts, "EnableMetricsServer"), true, "enable metrics-server")
 	cmd.Flags().BoolVar(&opts.EnableOpenIDConnect, longFlagName(opts, "EnableOpenIDConnect"), false, "enable OpenID Connect authentication")
+	cmd.Flags().BoolVar(&opts.EnableEncryptionProviders, longFlagName(opts, "EnableEncryptionProviders"), false, "enable Encryption Providers")
 
 	// MachineController
 	cmd.Flags().BoolVar(&opts.DeployMachineController, longFlagName(opts, "DeployMachineController"), true, "deploy kubermatic machine-controller")
@@ -358,6 +361,23 @@ func createAndPrintManifest(printOptions *printOpts) error {
 	}
 
 	// Features
+	printFeatures(cfg, printOptions)
+
+	// machine-controller
+	if !printOptions.DeployMachineController {
+		cfg.Set(yamled.Path{"machineController", "deploy"}, printOptions.DeployMachineController)
+	}
+
+	// Print the manifest
+	err := validateAndPrintConfig(cfg)
+	if err != nil {
+		return errors.Wrap(err, "unable to validate and print config")
+	}
+
+	return nil
+}
+
+func printFeatures(cfg *yamled.Document, printOptions *printOpts) {
 	if printOptions.EnablePodNodeSelector {
 		cfg.Set(yamled.Path{"features", "podNodeSelector", "enable"}, printOptions.EnablePodSecurityPolicy)
 		cfg.Set(yamled.Path{"features", "podNodeSelector", "config", "configFilePath"}, "")
@@ -396,13 +416,9 @@ func createAndPrintManifest(printOptions *printOpts) error {
 		cfg.Set(yamled.Path{"machineController", "image"}, printOptions.ImageMachineController)
 	}
 
-	// Print the manifest
-	err := validateAndPrintConfig(cfg)
-	if err != nil {
-		return errors.Wrap(err, "unable to validate and print config")
+	if printOptions.EnableEncryptionProviders {
+		cfg.Set(yamled.Path{"features", "encryptionProviders", "enable"}, printOptions.EnableEncryptionProviders)
 	}
-
-	return nil
 }
 
 func parseControlPlaneHosts(cfg *yamled.Document, hostList string) error {
@@ -546,28 +562,6 @@ cloudProvider:
   {{ .CloudProviderName }}: {}
   # Set the kubelet flag '--cloud-provider=external' and deploy the external CCM for supported providers
   external: {{ .CloudProviderExternal }}
-  # csiMigration enables the CSIMigration and CSIMigration{Provider} feature gates
-  # for providers that support the CSI migration.
-  # The CSI migration stability depends on the provider.
-  # More details about stability can be found in the Feature Gates document:
-  # https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/
-  #
-  # Note: Azure has two type of CSI drivers (AzureFile and AzureDisk) and two different
-  # feature gates (CSIMigrationAzureDisk and CSIMigrationAzureFile). Enabling CSI migration
-  # enables both feature gates. If one CSI driver is not deployed, the volume operations
-  # for volumes with missing CSI driver will fallback to the in-tree volume plugin.
-  csiMigration: false
-  # csiMigrationComplete enables the CSIMigration{Provider}Complete feature gate
-  # for providers that support the CSI migration.
-  # This feature gate disables fallback to the in-tree volume plugins, therefore,
-  # it should be enabled only if the CSI driver is deploy on all nodes, and after
-  # ensuring that the CSI driver works properly.
-  #
-  # Note: If you're running on Azure, make sure that you have both AzureFile
-  # and AzureDisk CSI drivers deployed, as enabling this feature disables the fallback
-  # to the in-tree volume plugins. See description for the CSIMigration field for
-  # more details.
-  csiMigrationComplete: false
   # Path to file that will be uploaded and used as custom '--cloud-config' file.
   cloudConfig: "{{ .CloudProviderCloudCfg }}"
 
@@ -685,6 +679,19 @@ features:
       # authorities in the oidc-ca-file, otherwise the host's root CA set will
       # be used.
       caFile: ""
+
+  # Enable Kubernetes Encryption Providers
+  # For more information: https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/
+  encryptionProviders:
+    # disabled by default
+    enable: {{ .EnableEncryptionProviders }}
+    # inline string
+    customEncryptionConfiguration: ""
+
+## Bundle of Root CA Certificates extracted from Mozilla
+## can be found here: https://curl.se/ca/cacert.pem
+## caBundle should be empty for default root CAs to be used
+caBundle: ""
 
 systemPackages:
   # will add Docker and Kubernetes repositories to OS package manager

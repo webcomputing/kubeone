@@ -19,8 +19,10 @@ package externalccm
 import (
 	"github.com/pkg/errors"
 
+	"k8c.io/kubeone/pkg/certificate/cabundle"
 	"k8c.io/kubeone/pkg/clientutil"
 	"k8c.io/kubeone/pkg/state"
+	"k8c.io/kubeone/pkg/templates/images"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -35,8 +37,6 @@ const (
 	vSphereSAName           = "cloud-controller-manager"
 	vSphereDeploymentName   = "vsphere-cloud-controller-manager"
 	vSphereConfigSecretName = "cloud-config" //nolint:gosec
-	vSphereImageRegistry    = "gcr.io"
-	vSphereImage            = "/cloud-provider-vsphere/cpi/release/manager:v1.2.1"
 )
 
 func ensureVsphere(s *state.State) error {
@@ -44,7 +44,9 @@ func ensureVsphere(s *state.State) error {
 		return errors.New("kubernetes client not initialized")
 	}
 
-	image := s.Cluster.RegistryConfiguration.ImageRegistry(vSphereImageRegistry) + vSphereImage
+	ccmImage := s.Images.Get(images.VsphereCCM)
+	ds := vSphereDaemonSet(ccmImage)
+	cabundle.Inject(s.Cluster.CABundle, &ds.Spec.Template)
 
 	k8sobjects := []client.Object{
 		vSphereServiceAccount(),
@@ -52,7 +54,7 @@ func ensureVsphere(s *state.State) error {
 		vSphereClusterRole(),
 		vSphereClusterRoleBinding(),
 		vSphereRoleBinding(),
-		vSphereDaemonSet(image),
+		ds,
 		vSphereService(),
 	}
 
@@ -190,6 +192,7 @@ func vSphereClusterRoleBinding() *rbacv1.ClusterRoleBinding {
 		},
 	}
 }
+
 func vSphereService() *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{

@@ -17,13 +17,20 @@ limitations under the License.
 package tasks
 
 import (
+	"fmt"
+
 	"github.com/pkg/errors"
 
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
+	"k8c.io/kubeone/pkg/certificate/cabundle"
 	"k8c.io/kubeone/pkg/scripts"
 	"k8c.io/kubeone/pkg/ssh"
 	"k8c.io/kubeone/pkg/state"
+	"k8c.io/kubeone/pkg/templates"
 	"k8c.io/kubeone/pkg/templates/admissionconfig"
+	encryptionproviders "k8c.io/kubeone/pkg/templates/encryptionproviders"
+
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 func installPrerequisites(s *state.State) error {
@@ -34,6 +41,7 @@ func installPrerequisites(s *state.State) error {
 
 func generateConfigurationFiles(s *state.State) error {
 	s.Configuration.AddFile("cfg/cloud-config", s.Cluster.CloudProvider.CloudConfig)
+	s.Configuration.AddFile("ca-certs/"+cabundle.FileName, s.Cluster.CABundle)
 
 	if s.Cluster.Features.StaticAuditLog != nil && s.Cluster.Features.StaticAuditLog.Enable {
 		if err := s.Configuration.AddFilePath("cfg/audit-policy.yaml", s.Cluster.Features.StaticAuditLog.Config.PolicyFilePath, s.ManifestFilePath); err != nil {
@@ -49,6 +57,26 @@ func generateConfigurationFiles(s *state.State) error {
 
 		if err := s.Configuration.AddFilePath("cfg/podnodeselector.yaml", s.Cluster.Features.PodNodeSelector.Config.ConfigFilePath, s.ManifestFilePath); err != nil {
 			return errors.Wrap(err, "failed to add podnodeselector config file")
+		}
+	}
+
+	if s.ShouldEnableEncryption() || s.EncryptionEnabled() {
+		configFileName := s.GetEncryptionProviderConfigName()
+		var config string
+		// User provided custom config
+		if s.Cluster.Features.EncryptionProviders.CustomEncryptionConfiguration != "" {
+			config = s.Cluster.Features.EncryptionProviders.CustomEncryptionConfiguration
+			s.Configuration.AddFile(fmt.Sprintf("cfg/%s", configFileName), config)
+		} else if s.ShouldEnableEncryption() { // automatically generate config
+			encryptionProvidersConfig, err := encryptionproviders.NewEncyrptionProvidersConfig(s)
+			if err != nil {
+				return err
+			}
+			config, err = templates.KubernetesToYAML([]runtime.Object{encryptionProvidersConfig})
+			if err != nil {
+				return err
+			}
+			s.Configuration.AddFile(fmt.Sprintf("cfg/%s", configFileName), config)
 		}
 	}
 
@@ -173,9 +201,21 @@ func uploadConfigurationFilesToNode(s *state.State, node *kubeoneapi.HostConfig,
 	if err != nil {
 		return err
 	}
-
 	_, _, err = s.Runner.RunRaw(cmd)
-	return err
+	if err != nil {
+		return err
+	}
+
+	cmd, err = scripts.SaveEncryptionProvidersConfig(s.WorkDir, s.GetEncryptionProviderConfigName())
+	if err != nil {
+		return err
+	}
+	_, _, err = s.Runner.RunRaw(cmd)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func configureProxy(s *state.State) error {

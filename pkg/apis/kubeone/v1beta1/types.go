@@ -51,6 +51,8 @@ type KubeOneCluster struct {
 	DynamicWorkers []DynamicWorkerConfig `json:"dynamicWorkers,omitempty"`
 	// MachineController configures the Kubermatic machine-controller component.
 	MachineController *MachineControllerConfig `json:"machineController,omitempty"`
+	// CABundle PEM encoded global CA
+	CABundle string `json:"caBundle,omitempty"`
 	// Features enables and configures additional cluster features.
 	Features Features `json:"features,omitempty"`
 	// Addons are used to deploy additional manifests.
@@ -366,6 +368,8 @@ type Features struct {
 	MetricsServer *MetricsServer `json:"metricsServer,omitempty"`
 	// OpenIDConnect
 	OpenIDConnect *OpenIDConnect `json:"openidConnect,omitempty"`
+	// Encryption Providers
+	EncryptionProviders *EncryptionProviders `json:"encryptionProviders,omitempty"`
 }
 
 // SystemPackages controls configurations of APT/YUM
@@ -570,4 +574,12 @@ type Addons struct {
 	Enable bool `json:"enable,omitempty"`
 	// Path on the local file system to the directory with addons manifests.
 	Path string `json:"path"`
+}
+
+// Encryption Providers feature flag
+type EncryptionProviders struct {
+	// Enable
+	Enable bool `json:"enable"`
+	// CustomEncryptionConfiguration
+	CustomEncryptionConfiguration string `json:"customEncryptionConfiguration"`
 }

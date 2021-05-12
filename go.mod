@@ -1,6 +1,6 @@
 module k8c.io/kubeone
 
-go 1.14
+go 1.16
 
 require (
 	github.com/BurntSushi/toml v0.3.1
@@ -8,14 +8,14 @@ require (
 	github.com/Masterminds/semver/v3 v3.1.1
 	github.com/Masterminds/sprig/v3 v3.2.0
 	github.com/aws/aws-sdk-go v1.36.2
+	github.com/docker/distribution v2.7.1+incompatible
 	github.com/dominodatalab/os-release v0.0.0-20190522011736-bcdb4a3e3c2f
 	github.com/google/go-cmp v0.5.4
 	github.com/imdario/mergo v0.3.11
 	github.com/koron-go/prefixw v0.0.0-20181013140428-271b207a7572
-	github.com/kubermatic/machine-controller v1.27.4
+	github.com/kubermatic/machine-controller v1.28.0
 	github.com/liggitt/tabwriter v0.0.0-20181228230101-89fcab3d43de
 	github.com/pkg/errors v0.9.1
-	github.com/pkg/sftp v1.12.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/sirupsen/logrus v1.7.0
 	github.com/spf13/cobra v1.1.1
@@ -28,6 +28,7 @@ require (
 	k8s.io/api v0.19.4
 	k8s.io/apiextensions-apiserver v0.19.4
 	k8s.io/apimachinery v0.19.4
+	k8s.io/apiserver v0.19.4
 	k8s.io/client-go v12.0.0+incompatible
 	k8s.io/cluster-bootstrap v0.19.4
 	k8s.io/code-generator v0.19.4
