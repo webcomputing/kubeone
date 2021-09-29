@@ -1,12 +1,13 @@
 +++
 title = "v1beta1 API Reference"
-date = 2021-04-19T12:12:05+03:00
+date = 2021-09-03T17:25:30+03:00
 weight = 11
 +++
 ## v1beta1
 
 * [APIEndpoint](#apiendpoint)
 * [AWSSpec](#awsspec)
+* [Addon](#addon)
 * [Addons](#addons)
 * [AssetConfiguration](#assetconfiguration)
 * [AzureSpec](#azurespec)
@@ -29,8 +30,11 @@ weight = 11
 * [GCESpec](#gcespec)
 * [HetznerSpec](#hetznerspec)
 * [HostConfig](#hostconfig)
+* [IPTables](#iptables)
+* [IPVSConfig](#ipvsconfig)
 * [ImageAsset](#imageasset)
 * [KubeOneCluster](#kubeonecluster)
+* [KubeProxyConfig](#kubeproxyconfig)
 * [MachineControllerConfig](#machinecontrollerconfig)
 * [MetricsServer](#metricsserver)
 * [NoneSpec](#nonespec)
@@ -74,6 +78,18 @@ AWSSpec defines the AWS cloud provider
 
 [Back to Group](#v1beta1)
 
+### Addon
+
+Addon config
+
+| Field | Description | Scheme | Required |
+| ----- | ----------- | ------ | -------- |
+| name | Name of the addon to configure | string | true |
+| params | Params to the addon, to render the addon using text/template, this will override globalParams | map[string]string | false |
+| delete | Delete flag to ensure the named addon with all its contents to be deleted | bool | false |
+
+[Back to Group](#v1beta1)
+
 ### Addons
 
 Addons config
@@ -81,7 +97,9 @@ Addons config
 | Field | Description | Scheme | Required |
 | ----- | ----------- | ------ | -------- |
 | enable | Enable | bool | false |
-| path | Path on the local file system to the directory with addons manifests. | string | true |
+| path | Path on the local file system to the directory with addons manifests. | string | false |
+| globalParams | GlobalParams to the addon, to render all addons using text/template | map[string]string | false |
+| addons | Addons is a list of config options for named addon | [][Addon](#addon) | false |
 
 [Back to Group](#v1beta1)
 
@@ -153,9 +171,8 @@ Only one cloud provider must be defined at the single time.
 | Field | Description | Scheme | Required |
 | ----- | ----------- | ------ | -------- |
 | external | External | bool | false |
-| csiMigration | CSIMigration enables the CSIMigration and CSIMigration{Provider} feature gates for providers that support the CSI migration. The CSI migration stability depends on the provider. More details about stability can be found in the Feature Gates document: https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/\n\nNote: Azure has two type of CSI drivers (AzureFile and AzureDisk) and two different feature gates (CSIMigrationAzureDisk and CSIMigrationAzureFile). Enabling CSI migration enables both feature gates. If one CSI driver is not deployed, the volume operations for volumes with missing CSI driver will fallback to the in-tree volume plugin. | bool | false |
-| csiMigrationComplete | CSIMigrationComplete enables the CSIMigration{Provider}Complete feature gate for providers that support the CSI migration. This feature gate disables fallback to the in-tree volume plugins, therefore, it should be enabled only if the CSI driver is deploy on all nodes, and after ensuring that the CSI driver works properly.\n\nNote: If you're running on Azure, make sure that you have both AzureFile and AzureDisk CSI drivers deployed, as enabling this feature disables the fallback to the in-tree volume plugins. See description for the CSIMigration field for more details. | bool | false |
 | cloudConfig | CloudConfig | string | false |
+| csiConfig | CSIConfig | string | false |
 | aws | AWS | *[AWSSpec](#awsspec) | false |
 | azure | Azure | *[AzureSpec](#azurespec) | false |
 | digitalocean | DigitalOcean | *[DigitalOceanSpec](#digitaloceanspec) | false |
@@ -179,6 +196,7 @@ ClusterNetworkConfig describes the cluster network
 | serviceDomainName | ServiceDomainName default value is \"cluster.local\" | string | false |
 | nodePortRange | NodePortRange default value is \"30000-32767\" | string | false |
 | cni | CNI default value is {canal: {mtu: 1450}} | *[CNI](#cni) | false |
+| kubeProxy | KubeProxy config | *[KubeProxyConfig](#kubeproxyconfig) | false |
 
 [Back to Group](#v1beta1)
 
@@ -340,6 +358,30 @@ HostConfig describes a single control plane node.
 
 [Back to Group](#v1beta1)
 
+### IPTables
+
+IPTables
+
+| Field | Description | Scheme | Required |
+| ----- | ----------- | ------ | -------- |
+
+[Back to Group](#v1beta1)
+
+### IPVSConfig
+
+IPVSConfig contains different options to configure IPVS kube-proxy mode
+
+| Field | Description | Scheme | Required |
+| ----- | ----------- | ------ | -------- |
+| scheduler | ipvs scheduler, if it’s not configured, then round-robin (rr) is the default value. Can be one of: * rr: round-robin * lc: least connection (smallest number of open connections) * dh: destination hashing * sh: source hashing * sed: shortest expected delay * nq: never queue | string | true |
+| excludeCIDRs | excludeCIDRs is a list of CIDR's which the ipvs proxier should not touch when cleaning up ipvs services. | []string | true |
+| strictARP | strict ARP configure arp_ignore and arp_announce to avoid answering ARP queries from kube-ipvs0 interface | bool | true |
+| tcpTimeout | tcpTimeout is the timeout value used for idle IPVS TCP sessions. The default value is 0, which preserves the current timeout value on the system. | metav1.Duration | true |
+| tcpFinTimeout | tcpFinTimeout is the timeout value used for IPVS TCP sessions after receiving a FIN. The default value is 0, which preserves the current timeout value on the system. | metav1.Duration | true |
+| udpTimeout | udpTimeout is the timeout value used for IPVS UDP packets. The default value is 0, which preserves the current timeout value on the system. | metav1.Duration | true |
+
+[Back to Group](#v1beta1)
+
 ### ImageAsset
 
 ImageAsset is used to customize the image repository and the image tag
@@ -374,6 +416,17 @@ KubeOneCluster is KubeOne Cluster API Schema
 | systemPackages | SystemPackages configure kubeone behaviour regarding OS packages. | *[SystemPackages](#systempackages) | false |
 | assetConfiguration | AssetConfiguration configures how are binaries and container images downloaded | [AssetConfiguration](#assetconfiguration) | false |
 | registryConfiguration | RegistryConfiguration configures how Docker images are pulled from an image registry | *[RegistryConfiguration](#registryconfiguration) | false |
+
+[Back to Group](#v1beta1)
+
+### KubeProxyConfig
+
+KubeProxyConfig defines configured kube-proxy mode, default is iptables mode
+
+| Field | Description | Scheme | Required |
+| ----- | ----------- | ------ | -------- |
+| ipvs | IPVS config | *[IPVSConfig](#ipvsconfig) | true |
+| iptables | IPTables config | *[IPTables](#iptables) | true |
 
 [Back to Group](#v1beta1)
 

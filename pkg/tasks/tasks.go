@@ -26,9 +26,10 @@ import (
 	"k8c.io/kubeone/pkg/features"
 	"k8c.io/kubeone/pkg/kubeconfig"
 	"k8c.io/kubeone/pkg/state"
+	"k8c.io/kubeone/pkg/templates/csi"
 	"k8c.io/kubeone/pkg/templates/externalccm"
 	"k8c.io/kubeone/pkg/templates/machinecontroller"
-	"k8c.io/kubeone/pkg/templates/nodelocaldns"
+	"k8c.io/kubeone/pkg/templates/resources"
 )
 
 type Tasks []Task
@@ -93,12 +94,18 @@ func WithHostnameOS(t Tasks) Tasks {
 func WithProbes(t Tasks) Tasks {
 	return t.append(
 		Task{Fn: runProbes, ErrMsg: "probes failed"},
+	)
+}
+
+func WithProbesAndSafeguard(t Tasks) Tasks {
+	return t.append(
+		Task{Fn: runProbes, ErrMsg: "probes failed"},
 		Task{Fn: safeguard, ErrMsg: "probes analysis failed"},
 	)
 }
 
 func WithHostnameOSAndProbes(t Tasks) Tasks {
-	return WithProbes(WithHostnameOS(t))
+	return WithProbesAndSafeguard(WithHostnameOS(t))
 }
 
 // WithFullInstall with install binaries (using WithBinariesOnly) and
@@ -151,9 +158,7 @@ func WithResources(t Tasks) Tasks {
 	return t.append(
 		Tasks{
 			{
-				Fn: func(s *state.State) error {
-					return s.RunTaskOnControlPlane(saveCABundle, state.RunParallel)
-				},
+				Fn: saveCABundle,
 				Predicate: func(s *state.State) bool {
 					return s.Cluster.CABundle != ""
 				},
@@ -175,7 +180,17 @@ func WithResources(t Tasks) Tasks {
 				ErrMsg: "failed to save kubeconfig to the local machine",
 			},
 			{
-				Fn:          nodelocaldns.Deploy,
+				Fn: func(s *state.State) error {
+					s.Logger.Info("Downloading PKI...")
+					return s.RunTaskOnLeader(certificate.DownloadKubePKI)
+				},
+				ErrMsg: "failed to download Kubernetes PKI from the leader",
+			},
+			{
+				Fn: func(s *state.State) error {
+					s.Logger.Infoln("Ensure node local DNS cache...")
+					return addons.EnsureAddonByName(s, resources.AddonNodeLocalDNS)
+				},
 				ErrMsg:      "failed to deploy nodelocaldns",
 				Description: "ensure nodelocaldns",
 			},
@@ -200,7 +215,7 @@ func WithResources(t Tasks) Tasks {
 				Predicate:   func(s *state.State) bool { return s.Cluster.CABundle != "" },
 			},
 			{
-				Fn:          addons.Ensure,
+				Fn:          addons.EnsureUserAddons,
 				ErrMsg:      "failed to apply addons",
 				Description: "ensure addons",
 				Predicate:   func(s *state.State) bool { return s.Cluster.Addons != nil && s.Cluster.Addons.Enable },
@@ -217,8 +232,10 @@ func WithResources(t Tasks) Tasks {
 				Predicate:   func(s *state.State) bool { return s.Cluster.CloudProvider.External },
 			},
 			{
-				Fn:     patchCNI,
-				ErrMsg: "failed to patch CNI",
+				Fn:          csi.Ensure,
+				ErrMsg:      "failed to ensure CSI driver",
+				Description: "ensure CSI driver",
+				Predicate:   func(s *state.State) bool { return s.Cluster.CloudProvider.External },
 			},
 			{
 				Fn:     joinStaticWorkerNodes,
@@ -227,13 +244,6 @@ func WithResources(t Tasks) Tasks {
 			{
 				Fn:     labelNodeOSes,
 				ErrMsg: "failed to label nodes with their OS",
-			},
-			{
-				Fn: func(s *state.State) error {
-					s.Logger.Info("Downloading PKI...")
-					return s.RunTaskOnLeader(certificate.DownloadKubePKI)
-				},
-				ErrMsg: "failed to download Kubernetes PKI from the leader",
 			},
 			{
 				Fn:          machinecontroller.Ensure,
@@ -290,6 +300,36 @@ func WithReset(t Tasks) Tasks {
 		{Fn: resetAllNodes, ErrMsg: "failed to reset nodes"},
 		{Fn: removeBinariesAllNodes, ErrMsg: "failed to remove binaries from nodes"},
 	}...)
+}
+
+func WithContainerDMigration(t Tasks) Tasks {
+	return WithHostnameOS(t).
+		append(Tasks{
+			{Fn: validateContainerdInConfig, ErrMsg: "failed to validate config", Retries: 1},
+			{Fn: kubeconfig.BuildKubernetesClientset, ErrMsg: "failed to build kubernetes clientset"},
+			{Fn: migrateToContainerd, ErrMsg: "failed to migrate to containerd"},
+			{Fn: patchCRISocketAnnotation, ErrMsg: "failed to patch Node objects"},
+			{
+				Fn: func(s *state.State) error {
+					s.Logger.Info("Downloading PKI...")
+					return s.RunTaskOnLeader(certificate.DownloadKubePKI)
+				},
+				ErrMsg: "failed to download Kubernetes PKI from the leader",
+			},
+			{
+				Fn: func(s *state.State) error {
+					if err := machinecontroller.Ensure(s); err != nil {
+						return err
+					}
+
+					s.Logger.Warn("Now please rolling restart your machineDeployments to get containerd")
+					s.Logger.Warn("see more at: https://docs.kubermatic.com/kubeone/v1.3/cheat_sheets/rollout_machinedeployment/")
+					return nil
+				},
+				ErrMsg:    "failed to ensure machine-controller",
+				Predicate: func(s *state.State) bool { return s.Cluster.MachineController.Deploy },
+			},
+		}...)
 }
 
 func WithClusterStatus(t Tasks) Tasks {
@@ -415,4 +455,47 @@ func WithRotateKey(t Tasks) Tasks {
 				Description: "restart KubeAPI containers",
 			},
 		}...)
+}
+
+func WithCCMCSIMigration(t Tasks) Tasks {
+	return t.append(Tasks{
+		{Fn: ccmMigrationValidateConfig, ErrMsg: "failed to validate config", Retries: 1},
+		{
+			Fn:     readyToCompleteCCMMigration,
+			ErrMsg: "failed to validate readiness to complete migration",
+			Predicate: func(s *state.State) bool {
+				return s.CCMMigrationComplete
+			},
+		},
+	}...).
+		append(kubernetesConfigFiles()...).
+		append(
+			Task{Fn: ccmMigrationRegenerateControlPlaneManifests, ErrMsg: "failed to regenerate static pod manifests"},
+			Task{Fn: ccmMigrationUpdateControlPlaneKubeletConfig, ErrMsg: "failed to update kubelet config on control plane nodes"},
+			Task{
+				Fn:     ccmMigrationUpdateStaticWorkersKubeletConfig,
+				ErrMsg: "failed to update kubelet config on static worker nodes",
+				Predicate: func(s *state.State) bool {
+					return len(s.Cluster.StaticWorkers.Hosts) > 0
+				},
+			},
+		).
+		append(WithResources(nil)...).
+		append(
+			Task{
+				Fn:        migrateOpenStackPVs,
+				ErrMsg:    "failed to migrate openstack persistentvolumes",
+				Predicate: func(s *state.State) bool { return s.Cluster.CloudProvider.Openstack != nil },
+			},
+			Task{
+				Fn: func(s *state.State) error {
+					s.Logger.Warn("Now please rolling restart your machineDeployments to migrate to ccm/csi")
+					s.Logger.Warn("see more at: https://docs.kubermatic.com/kubeone/v1.3/cheat_sheets/rollout_machinedeployment/")
+					s.Logger.Warn("Once you're done, please run this command again with the '--complete' flag to finish migration")
+					return nil
+				},
+				ErrMsg:    "failed to show next steps",
+				Predicate: func(s *state.State) bool { return s.Cluster.MachineController.Deploy && !s.CCMMigrationComplete },
+			},
+		)
 }

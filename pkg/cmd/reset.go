@@ -17,13 +17,18 @@ limitations under the License.
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/MakeNowJust/heredoc/v2"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"k8c.io/kubeone/pkg/kubeconfig"
 	"k8c.io/kubeone/pkg/state"
 	"k8c.io/kubeone/pkg/tasks"
+
+	clusterv1alpha1 "github.com/kubermatic/machine-controller/pkg/apis/cluster/v1alpha1"
 )
 
 type resetOpts struct {
@@ -74,7 +79,7 @@ func resetCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 		longFlagName(opts, "AutoApprove"),
 		shortFlagName(opts, "AutoApprove"),
 		false,
-		"auto approve reset (NO-OP/NOT YET ENABLED)")
+		"auto approve reset")
 
 	cmd.Flags().BoolVar(
 		&opts.DestroyWorkers,
@@ -98,7 +103,51 @@ func runReset(opts *resetOpts) error {
 		return errors.Wrap(err, "failed to initialize State")
 	}
 
-	s.Logger.Warnln("this command will require an explicit confirmation starting with the next minor release (v1.3)")
+	// We intentionally ignore error because "kubeone reset" might also be used
+	// on clusters that are not yet provisioned or broken
+	_ = kubeconfig.BuildKubernetesClientset(s)
+
+	s.Logger.Warnln("This command will PERMANENTLY destroy the Kubernetes cluster running on the following nodes:")
+
+	for _, node := range s.Cluster.ControlPlane.Hosts {
+		fmt.Printf("\t- reset control plane node %q (%s)\n", node.Hostname, node.PrivateAddress)
+	}
+	for _, node := range s.Cluster.StaticWorkers.Hosts {
+		fmt.Printf("\t- reset static worker nodes %q (%s)\n", node.Hostname, node.PrivateAddress)
+	}
+
+	if s.DynamicClient != nil {
+		// Gather information about machine-controller managed nodes
+		machines := clusterv1alpha1.MachineList{}
+		if err = s.DynamicClient.List(s.Context, &machines); err != nil {
+			s.Logger.Errorln("Failed to list machine-controller managed Machines.")
+			s.Logger.Warnln("Worker nodes might not be deleted. If there are worker nodes in the cluster, you might have to delete them manually.")
+		}
+
+		if len(machines.Items) > 0 {
+			fmt.Printf("\nThe following machine-controller managed worker nodes will be destroyed:\n")
+			for _, machine := range machines.Items {
+				fmt.Printf("\t- %s/%s\n", machine.Namespace, machine.Name)
+			}
+		}
+	} else {
+		s.Logger.Warnln("Failed to list machine-controller managed Machines.")
+		s.Logger.Warnln("Worker nodes might not be deleted.")
+		s.Logger.Warnln("If there are worker nodes in the cluster, you might have to delete them manually.")
+		s.Logger.Warnln("You can ignore this warning if the cluster isn't provisioned.")
+	}
+
+	fmt.Printf("\nAfter the command is complete, there's NO way to recover the cluster or its data!\n")
+
+	confirm, err := confirmCommand(opts.AutoApprove)
+	if err != nil {
+		return err
+	}
+
+	if !confirm {
+		s.Logger.Println("Operation canceled.")
+		return nil
+	}
 
 	return errors.Wrap(tasks.WithReset(nil).Run(s), "failed to reset the cluster")
 }

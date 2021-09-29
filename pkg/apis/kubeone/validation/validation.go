@@ -41,6 +41,7 @@ func ValidateKubeOneCluster(c kubeone.KubeOneCluster) field.ErrorList {
 	allErrs = append(allErrs, ValidateAPIEndpoint(c.APIEndpoint, field.NewPath("apiEndpoint"))...)
 	allErrs = append(allErrs, ValidateCloudProviderSpec(c.CloudProvider, field.NewPath("provider"))...)
 	allErrs = append(allErrs, ValidateVersionConfig(c.Versions, field.NewPath("versions"))...)
+	allErrs = append(allErrs, ValidateCloudProviderSupportsKubernetes(c, field.NewPath(""))...)
 	allErrs = append(allErrs, ValidateContainerRuntimeConfig(c.ContainerRuntime, c.Versions, field.NewPath("containerRuntime"))...)
 	allErrs = append(allErrs, ValidateClusterNetworkConfig(c.ClusterNetwork, field.NewPath("clusterNetwork"))...)
 	allErrs = append(allErrs, ValidateStaticWorkersConfig(c.StaticWorkers, field.NewPath("staticWorkers"))...)
@@ -161,8 +162,13 @@ func ValidateCloudProviderSpec(p kubeone.CloudProviderSpec, fldPath *field.Path)
 		allErrs = append(allErrs, field.Invalid(fldPath, "", "provider must be specified"))
 	}
 
-	if p.CSIMigrationComplete && !p.CSIMigration {
-		allErrs = append(allErrs, field.Forbidden(fldPath.Child("csiMigrationComplete"), "csiMigrationComplete requires csiMigration to be enabled"))
+	if len(p.CSIConfig) > 0 {
+		if p.Vsphere == nil {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("csiConfig"), "", ".cloudProvider.csiConfig is currently supported only for vsphere clusters"))
+		}
+		if !p.External {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("csiConfig"), "", ".cloudProvider.csiConfig is supported only for clusters using external cloud provider (.cloudProvider.external)"))
+		}
 	}
 
 	return allErrs
@@ -177,11 +183,27 @@ func ValidateVersionConfig(version kubeone.VersionConfig, fldPath *field.Path) f
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("kubernetes"), version, ".versions.kubernetes is not a semver string"))
 		return allErrs
 	}
-	if v.Major() != 1 || v.Minor() < 14 {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("kubernetes"), version, "kubernetes versions lower than 1.14 are not supported"))
+	if v.Major() != 1 || v.Minor() < 19 {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("kubernetes"), version, "kubernetes versions lower than 1.19 are not supported. You need to use an older KubeOne version to upgrade your cluster to v1.19. Please refer to the Compatibility section of docs for more details."))
 	}
 	if strings.HasPrefix(version.Kubernetes, "v") {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("kubernetes"), version, ".versions.kubernetes can't start with a leading 'v'"))
+	}
+
+	return allErrs
+}
+
+func ValidateCloudProviderSupportsKubernetes(c kubeone.KubeOneCluster, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	v, err := semver.NewVersion(c.Versions.Kubernetes)
+	if err != nil {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, ".versions.kubernetes is not a semver string"))
+		return allErrs
+	}
+
+	if c.CloudProvider.Vsphere != nil && v.Minor() >= 22 {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, "kubernetes versions 1.22.0 and newer are currently not supported for vsphere clusters"))
 	}
 
 	return allErrs
@@ -232,6 +254,28 @@ func ValidateClusterNetworkConfig(c kubeone.ClusterNetworkConfig, fldPath *field
 	}
 	if c.CNI != nil {
 		allErrs = append(allErrs, ValidateCNI(c.CNI, fldPath.Child("cni"))...)
+	}
+	if c.KubeProxy != nil {
+		allErrs = append(allErrs, ValidateKubeProxy(c.KubeProxy, fldPath.Child("kubeProxy"))...)
+	}
+
+	return allErrs
+}
+
+func ValidateKubeProxy(kbPrxConf *kubeone.KubeProxyConfig, fldPath *field.Path) field.ErrorList {
+	var (
+		allErrs     field.ErrorList
+		configFound bool
+	)
+
+	if kbPrxConf.IPTables != nil {
+		configFound = true
+	}
+
+	if kbPrxConf.IPVS != nil {
+		if configFound {
+			allErrs = append(allErrs, field.Invalid(fldPath, "", "should have only 1, ether iptables or ipvs or none"))
+		}
 	}
 
 	return allErrs

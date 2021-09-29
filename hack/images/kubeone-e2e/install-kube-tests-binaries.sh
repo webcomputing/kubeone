@@ -17,10 +17,10 @@
 set -euox pipefail
 
 declare -A full_versions
-full_versions["1.18"]="v1.18.17"
-full_versions["1.19"]="v1.19.9"
-full_versions["1.20"]="v1.20.5"
-full_versions["1.21"]="v1.21.0"
+full_versions["1.19"]="v1.19.15"
+full_versions["1.20"]="v1.20.11"
+full_versions["1.21"]="v1.21.5"
+full_versions["1.22"]="v1.22.2"
 
 root_dir=${KUBETESTS_ROOT:-"/opt/kube-test"}
 tmp_root=${TMP_ROOT:-"/tmp/get-kube"}
@@ -53,9 +53,6 @@ for version in "${!full_versions[@]}"; do
     rm "${directory}"/kubernetes/platforms/linux/amd64/genyaml
     rm "${directory}"/kubernetes/platforms/linux/amd64/kubemark
     rm "${directory}"/kubernetes/platforms/linux/amd64/linkcheck
-    if [ "$(command -v upx)" ]; then
-      upx "${directory}"/kubernetes/platforms/linux/amd64/*
-    fi
   fi
 done
 

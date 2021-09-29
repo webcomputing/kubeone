@@ -159,30 +159,10 @@ type APIEndpoint struct {
 type CloudProviderSpec struct {
 	// External
 	External bool `json:"external,omitempty"`
-	// CSIMigration enables the CSIMigration and CSIMigration{Provider} feature gates
-	// for providers that support the CSI migration.
-	// The CSI migration stability depends on the provider.
-	// More details about stability can be found in the Feature Gates document:
-	// https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/
-	//
-	// Note: Azure has two type of CSI drivers (AzureFile and AzureDisk) and two different
-	// feature gates (CSIMigrationAzureDisk and CSIMigrationAzureFile). Enabling CSI migration
-	// enables both feature gates. If one CSI driver is not deployed, the volume operations
-	// for volumes with missing CSI driver will fallback to the in-tree volume plugin.
-	CSIMigration bool `json:"csiMigration,omitempty"`
-	// CSIMigrationComplete enables the CSIMigration{Provider}Complete feature gate
-	// for providers that support the CSI migration.
-	// This feature gate disables fallback to the in-tree volume plugins, therefore,
-	// it should be enabled only if the CSI driver is deploy on all nodes, and after
-	// ensuring that the CSI driver works properly.
-	//
-	// Note: If you're running on Azure, make sure that you have both AzureFile
-	// and AzureDisk CSI drivers deployed, as enabling this feature disables the fallback
-	// to the in-tree volume plugins. See description for the CSIMigration field for
-	// more details.
-	CSIMigrationComplete bool `json:"csiMigrationComplete,omitempty"`
 	// CloudConfig
 	CloudConfig string `json:"cloudConfig,omitempty"`
+	// CSIConfig
+	CSIConfig string `json:"csiConfig,omitempty"`
 	// AWS
 	AWS *AWSSpec `json:"aws,omitempty"`
 	// Azure
@@ -255,7 +235,54 @@ type ClusterNetworkConfig struct {
 	// CNI
 	// default value is {canal: {mtu: 1450}}
 	CNI *CNI `json:"cni,omitempty"`
+	// KubeProxy config
+	KubeProxy *KubeProxyConfig `json:"kubeProxy,omitempty"`
 }
+
+// KubeProxyConfig defines configured kube-proxy mode, default is iptables mode
+type KubeProxyConfig struct {
+	// IPVS config
+	IPVS *IPVSConfig `json:"ipvs"`
+
+	// IPTables config
+	IPTables *IPTables `json:"iptables"`
+}
+
+// IPVSConfig contains different options to configure IPVS kube-proxy mode
+type IPVSConfig struct {
+	// ipvs scheduler, if it’s not configured, then round-robin (rr) is the default value.
+	// Can be one of:
+	// * rr: round-robin
+	// * lc: least connection (smallest number of open connections)
+	// * dh: destination hashing
+	// * sh: source hashing
+	// * sed: shortest expected delay
+	// * nq: never queue
+	Scheduler string `json:"scheduler"`
+
+	// excludeCIDRs is a list of CIDR's which the ipvs proxier should not touch
+	// when cleaning up ipvs services.
+	ExcludeCIDRs []string `json:"excludeCIDRs"`
+
+	// strict ARP configure arp_ignore and arp_announce to avoid answering ARP queries
+	// from kube-ipvs0 interface
+	StrictARP bool `json:"strictARP"`
+
+	// tcpTimeout is the timeout value used for idle IPVS TCP sessions.
+	// The default value is 0, which preserves the current timeout value on the system.
+	TCPTimeout metav1.Duration `json:"tcpTimeout"`
+
+	// tcpFinTimeout is the timeout value used for IPVS TCP sessions after receiving a FIN.
+	// The default value is 0, which preserves the current timeout value on the system.
+	TCPFinTimeout metav1.Duration `json:"tcpFinTimeout"`
+
+	// udpTimeout is the timeout value used for IPVS UDP packets.
+	// The default value is 0, which preserves the current timeout value on the system.
+	UDPTimeout metav1.Duration `json:"udpTimeout"`
+}
+
+// IPTables
+type IPTables struct{}
 
 // CNI config. Only one CNI provider must be used at the single time.
 type CNI struct {
@@ -568,12 +595,31 @@ type OpenIDConnectConfig struct {
 	CAFile string `json:"caFile"`
 }
 
+// Addon config
+type Addon struct {
+	// Name of the addon to configure
+	Name string `json:"name"`
+
+	// Params to the addon, to render the addon using text/template, this will override globalParams
+	Params map[string]string `json:"params,omitempty"`
+
+	// Delete flag to ensure the named addon with all its contents to be deleted
+	Delete bool `json:"delete,omitempty"`
+}
+
 // Addons config
 type Addons struct {
 	// Enable
 	Enable bool `json:"enable,omitempty"`
+
 	// Path on the local file system to the directory with addons manifests.
-	Path string `json:"path"`
+	Path string `json:"path,omitempty"`
+
+	// GlobalParams to the addon, to render all addons using text/template
+	GlobalParams map[string]string `json:"globalParams,omitempty"`
+
+	// Addons is a list of config options for named addon
+	Addons []Addon `json:"addons,omitempty"`
 }
 
 // Encryption Providers feature flag

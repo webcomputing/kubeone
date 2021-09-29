@@ -4,8 +4,7 @@ export "PATH=$PATH:/sbin:/usr/local/bin:/opt/bin"
 sudo swapoff -a
 sudo sed -i '/.*swap.*/d' /etc/fstab
 sudo setenforce 0 || true
-sudo sed -i 's/SELINUX=enforcing/SELINUX=permissive/g' /etc/sysconfig/selinux
-sudo sed -i 's/SELINUX=enforcing/SELINUX=permissive/g' /etc/selinux/config
+[ -f /etc/selinux/config ] && sudo sed -i 's/SELINUX=enforcing/SELINUX=permissive/g' /etc/selinux/config
 sudo systemctl disable --now firewalld || true
 
 source /etc/kubeone/proxy-env
@@ -85,20 +84,20 @@ cat <<EOF | sudo tee /etc/docker/daemon.json
 EOF
 
 
-sudo yum versionlock delete docker cri-tools || true
+sudo yum versionlock delete docker cri-tools containerd
 
-
-
-
-
-sudo yum install -y docker-19.03.13ce* cri-tools-1.13.0*
-sudo yum versionlock add docker cri-tools
+sudo yum install -y \
+	docker-19.03.* \
+	containerd.io-1.4.* \
+	cri-tools-1.13.0
+sudo yum versionlock add docker cri-tools containerd
 
 cat <<EOF | sudo tee /etc/crictl.yaml
 runtime-endpoint: unix:///var/run/dockershim.sock
 EOF
 
 sudo systemctl daemon-reload
+sudo systemctl enable --now containerd
 sudo systemctl enable --now docker
 
 
@@ -117,6 +116,8 @@ tar xvf node.tar.gz
 sudo install --owner=0 --group=0 --mode=0755 /tmp/k8s-binaries/kubernetes/node/bin/kubeadm /opt/bin/kubeadm
 sudo ln -sf /opt/bin/kubeadm /usr/bin/
 rm /tmp/k8s-binaries/kubernetes/node/bin/kubeadm
+
+
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now kubelet

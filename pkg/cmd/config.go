@@ -89,16 +89,16 @@ func configCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 		Short: "Commands for working with the KubeOneCluster configuration manifests",
 	}
 
-	cmd.AddCommand(printCmd())
-	cmd.AddCommand(migrateCmd(rootFlags))
-	cmd.AddCommand(machinedeploymentsCmd(rootFlags))
-	cmd.AddCommand(imagesCmd(rootFlags))
+	cmd.AddCommand(configPrintCmd())
+	cmd.AddCommand(configMigrateCmd(rootFlags))
+	cmd.AddCommand(configMachinedeploymentsCmd(rootFlags))
+	cmd.AddCommand(configImagesCmd(rootFlags))
 
 	return cmd
 }
 
-// printCmd setups the print command
-func printCmd() *cobra.Command {
+// configPrintCmd setups the print command
+func configPrintCmd() *cobra.Command {
 	opts := &printOpts{}
 	cmd := &cobra.Command{
 		Use:   "print",
@@ -179,8 +179,8 @@ func printCmd() *cobra.Command {
 	return cmd
 }
 
-// migrateCmd setups the migrate command
-func migrateCmd(rootFlags *pflag.FlagSet) *cobra.Command {
+// configMigrateCmd setups the migrate command
+func configMigrateCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Migrate the v1alpha1 KubeOneCluster manifest to the v1beta1 version",
@@ -205,8 +205,8 @@ The new manifest is printed on the standard output.
 	return cmd
 }
 
-// machinedeploymentsCmd setups the machinedeployments command
-func machinedeploymentsCmd(rootFlags *pflag.FlagSet) *cobra.Command {
+// configMachinedeploymentsCmd setups the machinedeployments command
+func configMachinedeploymentsCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "machinedeployments",
 		Short: "Print the manifest for creating MachineDeployments",
@@ -523,6 +523,25 @@ clusterNetwork:
   serviceDomainName: "{{ .ServiceDNS }}"
   # a nodePort range to reserve for services (default: 30000-32767)
   nodePortRange: "{{ .NodePortRange }}"
+  # kube-proxy configurations
+  kubeProxy:
+    # if this set, kube-proxy mode will be set to ipvs
+    ipvs:
+      # different schedulers can be configured:
+      # * rr: round-robin
+      # * lc: least connection (smallest number of open connections)
+      # * dh: destination hashing
+      # * sh: source hashing
+      # * sed: shortest expected delay
+      # * nq: never queue
+      scheduler: rr
+      strictArp: false
+      tcpTimeout: "0"
+      tcpFinTimeout: "0"
+      udpTimeout: "0"
+      excludeCIDRs: []
+    # if mode is by default
+    iptables: {}
   # CNI plugin of choice. CNI can not be changed later at upgrade time.
   cni:
     # Only one CNI plugin can be defined at the same time
@@ -564,6 +583,9 @@ cloudProvider:
   external: {{ .CloudProviderExternal }}
   # Path to file that will be uploaded and used as custom '--cloud-config' file.
   cloudConfig: "{{ .CloudProviderCloudCfg }}"
+  # CSIConfig is configuration passed to the CSI driver.
+  # This is currently used only for vSphere clusters.
+  csiConfig: ""
 
 # Controls which container runtime will be installed on instances.
 # By default:
@@ -789,7 +811,30 @@ addons:
   enable: false
   # In case when the relative path is provided, the path is relative
   # to the KubeOne configuration file.
+  # This path must be always provided and the directory must exist, even if
+  # using only embedded addons.
   path: "./addons"
+  # globalParams is a key-value map of values passed to the addons templating engine,
+  # to be used in the addons' manifests. The values defined here are passed to all
+  # addons.
+  globalParams:
+    key: value
+  # addons is used to enable addons embedded in the KubeOne binary.
+  # Currently backups-restic, default-storage-class, and unattended-upgrades are
+  # available addons.
+  # Check out the documentation to find more information about what are embedded
+  # addons and how to use them:
+  # https://docs.kubermatic.com/kubeone/v1.3/guides/addons/
+  addons:
+    # name of the addon to be enabled/deployed (e.g. backups-restic)
+    - name: ""
+      # delete triggers deletion of the deployed addon
+      delete: false
+      # params is a key-value map of values passed to the addons templating engine,
+      # to be used in the addon's manifests. Values defined here override the values
+      # defined in globalParams.
+      params:
+        key: value
 
 # The list of nodes can be overwritten by providing Terraform output.
 # You are strongly encouraged to provide an odd number of nodes and

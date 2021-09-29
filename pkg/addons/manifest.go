@@ -19,12 +19,14 @@ package addons
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"io"
-	"io/ioutil"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"text/template"
 
+	"github.com/BurntSushi/toml"
 	"github.com/Masterminds/sprig/v3"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -39,53 +41,60 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func getManifests(s *state.State, templateData TemplateData) error {
-	addonsPath := s.Cluster.Addons.Path
-	if !filepath.IsAbs(addonsPath) && s.ManifestFilePath != "" {
-		manifestAbsPath, err := filepath.Abs(filepath.Dir(s.ManifestFilePath))
-		if err != nil {
-			return errors.Wrap(err, "unable to get absolute path to the cluster manifest")
-		}
-		addonsPath = filepath.Join(manifestAbsPath, addonsPath)
-	}
-
+func (a *applier) getManifestsFromDirectory(s *state.State, fsys fs.FS, addonName string) (string, error) {
 	overwriteRegistry := ""
 	if s.Cluster.RegistryConfiguration != nil && s.Cluster.RegistryConfiguration.OverwriteRegistry != "" {
 		overwriteRegistry = s.Cluster.RegistryConfiguration.OverwriteRegistry
 	}
 
-	manifests, err := loadAddonsManifests(addonsPath, s.Logger, s.Verbose, templateData, overwriteRegistry)
-	if err != nil {
-		return err
+	var addonParams map[string]string
+	if s.Cluster.Addons.Enabled() {
+		for _, addon := range s.Cluster.Addons.Addons {
+			if addon.Name == addonName {
+				addonParams = addon.Params
+				break
+			}
+		}
 	}
 
-	rawManifests, err := ensureAddonsLabelsOnResources(manifests)
+	manifests, err := a.loadAddonsManifests(fsys, addonName, addonParams, s.Logger, s.Verbose, overwriteRegistry)
 	if err != nil {
-		return err
+		return "", err
+	}
+
+	rawManifests, err := ensureAddonsLabelsOnResources(manifests, addonName)
+	if err != nil {
+		return "", err
 	}
 
 	combinedManifests := combineManifests(rawManifests)
-	s.Configuration.AddFile("addons/addons.yaml", combinedManifests.String())
 
-	return nil
+	return combinedManifests.String(), nil
 }
 
 // loadAddonsManifests loads all YAML files from a given directory and runs the templating logic
-func loadAddonsManifests(addonsPath string, logger logrus.FieldLogger, verbose bool, templateData TemplateData, overwriteRegistry string) ([]runtime.RawExtension, error) {
-	manifests := []runtime.RawExtension{}
+func (a *applier) loadAddonsManifests(
+	fsys fs.FS,
+	addonName string,
+	addonParams map[string]string,
+	logger logrus.FieldLogger,
+	verbose bool,
+	overwriteRegistry string,
+) ([]runtime.RawExtension, error) {
+	var manifests []runtime.RawExtension
 
-	files, err := ioutil.ReadDir(addonsPath)
+	files, err := fs.ReadDir(fsys, filepath.Join(".", addonName))
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to read the addons directory %s", addonsPath)
+		return nil, errors.Wrapf(err, "failed to read the addons directory %s", addonName)
 	}
 
 	for _, file := range files {
-		filePath := filepath.Join(addonsPath, file.Name())
+		filePath := filepath.Join(addonName, file.Name())
 		if file.IsDir() {
-			logger.Infof("Found directory '%s' in the addons path. Ignoring.\n", file.Name())
 			continue
 		}
-		ext := strings.ToLower(filepath.Ext(filePath))
+
+		ext := strings.ToLower(filepath.Ext(file.Name()))
 		// Only YAML, YML and JSON manifests are supported
 		switch ext {
 		case ".yaml", ".yml", ".json":
@@ -95,11 +104,12 @@ func loadAddonsManifests(addonsPath string, logger logrus.FieldLogger, verbose b
 			}
 			continue
 		}
+
 		if verbose {
 			logger.Infof("Parsing addons manifest '%s'\n", file.Name())
 		}
 
-		manifestBytes, err := ioutil.ReadFile(filePath)
+		manifestBytes, err := fs.ReadFile(fsys, filePath)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to load addon %s", file.Name())
 		}
@@ -108,8 +118,21 @@ func loadAddonsManifests(addonsPath string, logger logrus.FieldLogger, verbose b
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to template addons manifest %s", file.Name())
 		}
+
+		// Make a copy and merge Params
+		tplDataParams := map[string]string{}
+		for k, v := range a.TemplateData.Params {
+			tplDataParams[k] = v
+		}
+		for k, v := range addonParams {
+			tplDataParams[k] = v
+		}
+
+		tplData := a.TemplateData
+		tplData.Params = tplDataParams
+
 		buf := bytes.NewBuffer([]byte{})
-		if err := tpl.Execute(buf, templateData); err != nil {
+		if err := tpl.Execute(buf, tplData); err != nil {
 			return nil, errors.Wrapf(err, "failed to template addons manifest %s", file.Name())
 		}
 
@@ -127,19 +150,23 @@ func loadAddonsManifests(addonsPath string, logger logrus.FieldLogger, verbose b
 				}
 				return nil, errors.Wrapf(err, "failed reading from YAML reader for manifest %s", file.Name())
 			}
+
 			b = bytes.TrimSpace(b)
 			if len(b) == 0 {
 				continue
 			}
+
 			decoder := kyaml.NewYAMLToJSONDecoder(bytes.NewBuffer(b))
 			raw := runtime.RawExtension{}
 			if err := decoder.Decode(&raw); err != nil {
 				return nil, errors.Wrapf(err, "failed to decode manifest %s", file.Name())
 			}
+
 			if len(raw.Raw) == 0 {
 				// This can happen if the manifest contains only comments
 				continue
 			}
+
 			manifests = append(manifests, raw)
 		}
 	}
@@ -148,7 +175,7 @@ func loadAddonsManifests(addonsPath string, logger logrus.FieldLogger, verbose b
 }
 
 // ensureAddonsLabelsOnResources applies the addons label on all resources in the manifest
-func ensureAddonsLabelsOnResources(manifests []runtime.RawExtension) ([]*bytes.Buffer, error) {
+func ensureAddonsLabelsOnResources(manifests []runtime.RawExtension, addonName string) ([]*bytes.Buffer, error) {
 	var rawManifests []*bytes.Buffer
 
 	for _, m := range manifests {
@@ -161,7 +188,7 @@ func ensureAddonsLabelsOnResources(manifests []runtime.RawExtension) ([]*bytes.B
 		if existingLabels == nil {
 			existingLabels = map[string]string{}
 		}
-		existingLabels[addonLabel] = ""
+		existingLabels[addonLabel] = addonName
 		parsedUnstructuredObj.SetLabels(existingLabels)
 
 		jsonBuffer := &bytes.Buffer{}
@@ -196,6 +223,16 @@ func combineManifests(manifests []*bytes.Buffer) *bytes.Buffer {
 	return bytes.NewBufferString(strings.Join(parts, "\n---\n") + "\n")
 }
 
+type vsphereCSIWebhookConfig struct {
+	Port     string `toml:"port"`
+	CertFile string `toml:"cert-file"`
+	KeyFile  string `toml:"key-file"`
+}
+
+type vsphereCSIWebhookConfigWrapper struct {
+	WebHookConfig vsphereCSIWebhookConfig `toml:"WebHookConfig"`
+}
+
 func txtFuncMap(overwriteRegistry string) template.FuncMap {
 	funcs := sprig.TxtFuncMap()
 
@@ -219,6 +256,36 @@ func txtFuncMap(overwriteRegistry string) template.FuncMap {
 	funcs["caBundleVolumeMount"] = func() (string, error) {
 		buf, err := yaml.Marshal([]corev1.VolumeMount{cabundle.VolumeMount()})
 		return string(buf), err
+	}
+
+	funcs["PacketSecret"] = func(apiKey, projectID string) (string, error) {
+		packetSecret := struct {
+			APIKey    string `json:"apiKey"`
+			ProjectID string `json:"projectID"`
+		}{
+			APIKey:    apiKey,
+			ProjectID: projectID,
+		}
+
+		buf, err := json.Marshal(packetSecret)
+		return string(buf), err
+	}
+
+	funcs["vSphereCSIWebhookConfig"] = func() (string, error) {
+		cfg := vsphereCSIWebhookConfigWrapper{
+			WebHookConfig: vsphereCSIWebhookConfig{
+				Port:     "8443",
+				CertFile: "/etc/webhook/cert.pem",
+				KeyFile:  "/etc/webhook/key.pem",
+			},
+		}
+
+		var buf strings.Builder
+		enc := toml.NewEncoder(&buf)
+		enc.Indent = ""
+		err := enc.Encode(cfg)
+
+		return buf.String(), err
 	}
 
 	return funcs

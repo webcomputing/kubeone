@@ -131,12 +131,12 @@ func Convert_kubeone_CloudProviderSpec_To_v1alpha1_CloudProviderSpec(in *kubeone
 	return nil
 }
 
-func Convert_v1alpha1_ClusterNetworkConfig_To_kubeone_ClusterNetworkConfig(in *ClusterNetworkConfig, out *kubeoneapi.ClusterNetworkConfig, s conversion.Scope) error {
-	if err := autoConvert_v1alpha1_ClusterNetworkConfig_To_kubeone_ClusterNetworkConfig(in, out, s); err != nil {
-		return err
-	}
+func Convert_kubeone_ClusterNetworkConfig_To_v1alpha1_ClusterNetworkConfig(in *kubeoneapi.ClusterNetworkConfig, out *ClusterNetworkConfig, s conversion.Scope) error {
+	return autoConvert_kubeone_ClusterNetworkConfig_To_v1alpha1_ClusterNetworkConfig(in, out, s)
+}
 
-	return nil
+func Convert_v1alpha1_ClusterNetworkConfig_To_kubeone_ClusterNetworkConfig(in *ClusterNetworkConfig, out *kubeoneapi.ClusterNetworkConfig, s conversion.Scope) error {
+	return autoConvert_v1alpha1_ClusterNetworkConfig_To_kubeone_ClusterNetworkConfig(in, out, s)
 }
 
 func Convert_v1alpha1_HostConfig_To_kubeone_HostConfig(in *HostConfig, out *kubeoneapi.HostConfig, s conversion.Scope) error {
@@ -300,4 +300,8 @@ func Convert_v1alpha1_MachineControllerConfig_To_kubeone_MachineControllerConfig
 
 func Convert_kubeone_Features_To_v1alpha1_Features(in *kubeoneapi.Features, out *Features, s conversion.Scope) error {
 	return autoConvert_kubeone_Features_To_v1alpha1_Features(in, out, s)
+}
+
+func Convert_kubeone_Addons_To_v1alpha1_Addons(in *kubeoneapi.Addons, out *Addons, conv conversion.Scope) error {
+	return autoConvert_kubeone_Addons_To_v1alpha1_Addons(in, out, conv)
 }

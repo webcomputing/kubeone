@@ -23,7 +23,7 @@ provider "vsphere" {
 
 locals {
   resource_pool_id = var.resource_pool_name == "" ? data.vsphere_compute_cluster.cluster.resource_pool_id : data.vsphere_resource_pool.pool[0].id
-  hostnames = formatlist("${var.cluster_name}-cp-%d", [1, 2, 3])
+  hostnames        = formatlist("${var.cluster_name}-cp-%d", [1, 2, 3])
 }
 
 data "vsphere_datacenter" "dc" {
@@ -66,6 +66,7 @@ resource "vsphere_virtual_machine" "control_plane" {
   memory           = var.control_plane_memory
   guest_id         = data.vsphere_virtual_machine.template.guest_id
   scsi_type        = data.vsphere_virtual_machine.template.scsi_type
+  firmware         = data.vsphere_virtual_machine.template.firmware
 
   network_interface {
     network_id   = data.vsphere_network.network.id

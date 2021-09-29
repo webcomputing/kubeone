@@ -16,6 +16,7 @@ limitations under the License.
 
 variable "cluster_name" {
   description = "Name of the cluster"
+  type        = string
 }
 
 variable "worker_os" {
@@ -26,42 +27,51 @@ variable "worker_os" {
   # * centos
   # * flatcar
   # * rhel
+  # * amzn2
   default = ""
+  type    = string
 }
 
 variable "ssh_public_key_file" {
   description = "SSH public key file"
   default     = "~/.ssh/id_rsa.pub"
+  type        = string
 }
 
 variable "ssh_port" {
   description = "SSH port to be used to provision instances"
   default     = 22
+  type        = number
 }
 
 variable "ssh_username" {
   description = "SSH user, used only in output"
   default     = "ubuntu"
+  type        = string
 }
 
 variable "ssh_private_key_file" {
   description = "SSH private key file used to access instances"
   default     = ""
+  type        = string
 }
 
 variable "ssh_agent_socket" {
   description = "SSH Agent socket, default to grab from $SSH_AUTH_SOCK"
   default     = "env:SSH_AUTH_SOCK"
+  type        = string
 }
 
 variable "bastion_port" {
   description = "Bastion SSH port"
   default     = 22
+  type        = number
 }
 
 variable "bastion_user" {
   description = "Bastion SSH username"
   default     = "ubuntu"
+  type        = string
 }
 
 # Provider specific settings
@@ -69,11 +79,14 @@ variable "bastion_user" {
 variable "aws_region" {
   default     = "eu-west-3"
   description = "AWS region to speak to"
+  type        = string
+
 }
 
 variable "vpc_id" {
   default     = "default"
   description = "VPC to use ('default' for default VPC)"
+  type        = string
 }
 
 variable "control_plane_type" {
@@ -84,16 +97,19 @@ variable "control_plane_type" {
 variable "control_plane_volume_size" {
   default     = 100
   description = "Size of the EBS volume, in Gb"
+  type        = number
 }
 
 variable "worker_type" {
   default     = "t3.medium"
   description = "instance type for workers"
+  type        = string
 }
 
 variable "bastion_type" {
   default     = "t3.nano"
   description = "instance type for bastion"
+  type        = string
 }
 
 variable "os" {
@@ -104,16 +120,23 @@ variable "os" {
   # * centos
   # * rhel
   # * flatcar
+  # * amzn2
   default = "ubuntu"
+  type    = string
 }
 
 variable "ami" {
   description = "AMI ID, use it to fixate control-plane AMI in order to avoid force-recreation it at later times"
   default     = ""
+  type        = string
 }
 
 variable "ami_filters" {
   description = "map with AMI filters"
+  type = map(object({
+    owners     = list(string)
+    image_name = list(string)
+  }))
   default = {
     ubuntu = {
       owners     = ["099720109477"] # Canonical
@@ -135,7 +158,7 @@ variable "ami_filters" {
       image_name = ["RHEL-8*_HVM-*-x86_64-*"]
     }
 
-    amazon_linux2 = {
+    amzn2 = {
       owners     = ["137112412989"] # Amazon
       image_name = ["amzn2-ami-hvm-2.0.*-x86_64-gp2"]
     }
@@ -145,30 +168,36 @@ variable "ami_filters" {
 variable "subnets_cidr" {
   default     = 24
   description = "CIDR mask bits per subnet"
+  type        = number
 }
 
 variable "internal_api_lb" {
   default     = false
   description = "make kubernetes API loadbalancer internal (reachible only from inside the VPC)"
-}
-
-variable "open_nodeports" {
-  default     = false
-  description = "open NodePorts flag"
+  type        = bool
 }
 
 variable "initial_machinedeployment_replicas" {
   default     = 1
   description = "number of replicas per MachineDeployment"
+  type        = number
+
 }
 
 variable "static_workers_count" {
   description = "number of static workers"
   default     = 0
+  type        = number
 }
 
 variable "initial_machinedeployment_spotinstances" {
   description = "use spot instances for initial machine-deployment"
   default     = false
+  type        = bool
+}
+
+variable "worker_deploy_ssh_key" {
+  description = "add provided ssh public key to MachineDeployments"
+  default     = true
   type        = bool
 }

@@ -31,11 +31,13 @@ import (
 	"k8c.io/kubeone/pkg/kubeflags"
 	"k8c.io/kubeone/pkg/state"
 	"k8c.io/kubeone/pkg/templates/kubeadm/kubeadmargs"
-	"k8c.io/kubeone/pkg/templates/nodelocaldns"
+	"k8c.io/kubeone/pkg/templates/resources"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	componentbasev1alpha1 "k8s.io/component-base/config/v1alpha1"
+	kubeproxyv1alpha1 "k8s.io/kube-proxy/config/v1alpha1"
 	kubeletconfigv1beta1 "k8s.io/kubelet/config/v1beta1"
 )
 
@@ -165,19 +167,20 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 		CgroupDriver:       "systemd",
 		ReadOnlyPort:       0,
 		RotateCertificates: true,
-		ClusterDNS:         []string{nodelocaldns.VirtualIP},
+		ClusterDNS:         []string{resources.NodeLocalDNSVirtualIP},
 		Authentication: kubeletconfigv1beta1.KubeletAuthentication{
 			Anonymous: kubeletconfigv1beta1.KubeletAnonymousAuthentication{
 				Enabled: &bfalse,
 			},
 		},
+		FeatureGates: map[string]bool{},
 	}
 
 	if cluster.AssetConfiguration.Pause.ImageRepository != "" {
 		nodeRegistration.KubeletExtraArgs["pod-infra-container-image"] = cluster.AssetConfiguration.Pause.ImageRepository + "/pause:" + cluster.AssetConfiguration.Pause.ImageTag
 	}
 
-	if cluster.CloudProvider.CloudProviderInTree() {
+	if s.ShouldEnableInTreeCloudProvider() {
 		renderedCloudConfig := "/etc/kubernetes/cloud-config"
 		cloudConfigVol := kubeadmv1beta2.HostPathMount{
 			Name:      "cloud-config",
@@ -209,9 +212,43 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 	}
 
 	if cluster.CloudProvider.External {
-		delete(clusterConfig.APIServer.ExtraArgs, "cloud-provider")
-		delete(clusterConfig.ControllerManager.ExtraArgs, "cloud-provider")
-		nodeRegistration.KubeletExtraArgs["cloud-provider"] = "external"
+		if !s.ShouldEnableInTreeCloudProvider() {
+			delete(clusterConfig.APIServer.ExtraArgs, "cloud-provider")
+			delete(clusterConfig.ControllerManager.ExtraArgs, "cloud-provider")
+			nodeRegistration.KubeletExtraArgs["cloud-provider"] = "external"
+		} else {
+			// .cloudProvider.external enabled, but in-tree cloud provider should be enabled
+			// means that we're in the CCM migration process.
+			// In that case, we should leave cloud-provider flags in place, but explicitly
+			// disable CCM-related controllers.
+			clusterConfig.ControllerManager.ExtraArgs["controllers"] = "*,bootstrapsigner,tokencleaner,-cloud-node-lifecycle,-route,-service"
+		}
+
+		if s.ShouldEnableCSIMigration() {
+			featureGates, featureGatesFlag, err := s.Cluster.CSIMigrationFeatureGates(s.ShouldUnregisterInTreeCloudProvider())
+			if err != nil {
+				return nil, err
+			}
+
+			// Kubernetes API server
+			if fg, ok := clusterConfig.APIServer.ExtraArgs["feature-gates"]; ok && len(fg) > 0 {
+				clusterConfig.APIServer.ExtraArgs["feature-gates"] = fmt.Sprintf("%s,%s", clusterConfig.APIServer.ExtraArgs["feature-gates"], featureGatesFlag)
+			} else {
+				clusterConfig.APIServer.ExtraArgs["feature-gates"] = featureGatesFlag
+			}
+
+			// Kubernetes Controller Manager
+			if fg, ok := clusterConfig.ControllerManager.ExtraArgs["feature-gates"]; ok && len(fg) > 0 {
+				clusterConfig.ControllerManager.ExtraArgs["feature-gates"] = fmt.Sprintf("%s,%s", clusterConfig.ControllerManager.ExtraArgs["feature-gates"], featureGatesFlag)
+			} else {
+				clusterConfig.ControllerManager.ExtraArgs["feature-gates"] = featureGatesFlag
+			}
+
+			// Kubelet
+			for k, v := range featureGates {
+				kubeletConfig.FeatureGates[k] = v
+			}
+		}
 	}
 
 	if cluster.Features.StaticAuditLog != nil && cluster.Features.StaticAuditLog.Enable {
@@ -282,7 +319,9 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 	initConfig.NodeRegistration = nodeRegistration
 	joinConfig.NodeRegistration = nodeRegistration
 
-	return []runtime.Object{initConfig, joinConfig, clusterConfig, kubeletConfig}, nil
+	kubeproxyConfig := kubeProxyConfiguration(s)
+
+	return []runtime.Object{initConfig, joinConfig, clusterConfig, kubeletConfig, kubeproxyConfig}, nil
 }
 
 // NewConfig returns all required configs to init a cluster via a set of v1beta2 configs
@@ -319,19 +358,20 @@ func NewConfigWorker(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Obje
 		CgroupDriver:       "systemd",
 		ReadOnlyPort:       0,
 		RotateCertificates: true,
-		ClusterDNS:         []string{nodelocaldns.VirtualIP},
+		ClusterDNS:         []string{resources.NodeLocalDNSVirtualIP},
 		Authentication: kubeletconfigv1beta1.KubeletAuthentication{
 			Anonymous: kubeletconfigv1beta1.KubeletAnonymousAuthentication{
 				Enabled: &bfalse,
 			},
 		},
+		FeatureGates: map[string]bool{},
 	}
 
 	if cluster.AssetConfiguration.Pause.ImageRepository != "" {
 		nodeRegistration.KubeletExtraArgs["pod-infra-container-image"] = cluster.AssetConfiguration.Pause.ImageRepository + "/pause:" + cluster.AssetConfiguration.Pause.ImageTag
 	}
 
-	if cluster.CloudProvider.CloudProviderInTree() {
+	if s.ShouldEnableInTreeCloudProvider() {
 		renderedCloudConfig := "/etc/kubernetes/cloud-config"
 
 		nodeRegistration.KubeletExtraArgs["cloud-provider"] = cluster.CloudProvider.CloudProviderName()
@@ -339,12 +379,25 @@ func NewConfigWorker(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Obje
 	}
 
 	if cluster.CloudProvider.External {
-		nodeRegistration.KubeletExtraArgs["cloud-provider"] = "external"
+		if !s.ShouldEnableInTreeCloudProvider() {
+			nodeRegistration.KubeletExtraArgs["cloud-provider"] = "external"
+		}
+		if s.ShouldEnableCSIMigration() {
+			featureGates, _, err := s.Cluster.CSIMigrationFeatureGates(s.ShouldUnregisterInTreeCloudProvider())
+			if err != nil {
+				return nil, err
+			}
+			for k, v := range featureGates {
+				kubeletConfig.FeatureGates[k] = v
+			}
+		}
 	}
 
 	joinConfig.NodeRegistration = nodeRegistration
 
-	return []runtime.Object{joinConfig, kubeletConfig}, nil
+	kubeproxyConfig := kubeProxyConfiguration(s)
+
+	return []runtime.Object{joinConfig, kubeletConfig, kubeproxyConfig}, nil
 }
 
 func newNodeIP(host kubeoneapi.HostConfig) string {
@@ -366,4 +419,36 @@ func newNodeRegistration(s *state.State, host kubeoneapi.HostConfig) kubeadmv1be
 			"volume-plugin-dir": "/var/lib/kubelet/volumeplugins",
 		},
 	}
+}
+
+func kubeProxyConfiguration(s *state.State) *kubeproxyv1alpha1.KubeProxyConfiguration {
+	kubeProxyConfig := &kubeproxyv1alpha1.KubeProxyConfiguration{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "KubeProxyConfiguration",
+			APIVersion: "kubeproxy.config.k8s.io/v1alpha1",
+		},
+		ClusterCIDR: s.Cluster.ClusterNetwork.PodSubnet,
+		ClientConnection: componentbasev1alpha1.ClientConnectionConfiguration{
+			Kubeconfig: "/var/lib/kube-proxy/kubeconfig.conf",
+		},
+	}
+
+	if kbPrx := s.Cluster.ClusterNetwork.KubeProxy; kbPrx != nil {
+		switch {
+		case kbPrx.IPVS != nil:
+			kubeProxyConfig.Mode = kubeproxyv1alpha1.ProxyMode("ipvs")
+			kubeProxyConfig.IPVS = kubeproxyv1alpha1.KubeProxyIPVSConfiguration{
+				StrictARP:     kbPrx.IPVS.StrictARP,
+				Scheduler:     kbPrx.IPVS.Scheduler,
+				ExcludeCIDRs:  kbPrx.IPVS.ExcludeCIDRs,
+				TCPTimeout:    kbPrx.IPVS.TCPTimeout,
+				TCPFinTimeout: kbPrx.IPVS.TCPFinTimeout,
+				UDPTimeout:    kbPrx.IPVS.UDPTimeout,
+			}
+		case kbPrx.IPTables != nil:
+			kubeProxyConfig.Mode = kubeproxyv1alpha1.ProxyMode("iptables")
+		}
+	}
+
+	return kubeProxyConfig
 }

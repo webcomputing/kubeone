@@ -67,7 +67,7 @@ buildenv:
 .PHONY: lint
 lint:
 	@golangci-lint --version
-	golangci-lint run -v ./pkg/... ./test/...
+	golangci-lint run --timeout=5m -v ./pkg/... ./test/...
 
 .PHONY: verify-licence
 verify-licence: GOFLAGS = -mod=readonly
@@ -92,3 +92,6 @@ prowfmt:
 	yq --inplace eval .prow.yaml
 
 fmt: shfmt prowfmt
+
+gogenerate:
+	go generate ./pkg/...
