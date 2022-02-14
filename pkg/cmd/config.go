@@ -79,8 +79,7 @@ type printOpts struct {
 	EnableOpenIDConnect       bool `longflag:"enable-openid-connect"`
 	EnableEncryptionProviders bool `longflag:"enable-encryption-providers"`
 
-	DeployMachineController bool   `longflag:"deploy-machine-controller"`
-	ImageMachineController  string `longflag:"image-machine-controller"`
+	DeployMachineController bool `longflag:"deploy-machine-controller"`
 
 	ContainerLogMaxSize  string `longflag:"container-log-max-size"`
 	ContainerLogMaxFiles int32  `longflag:"container-log-max-files"`
@@ -178,7 +177,6 @@ func configPrintCmd() *cobra.Command {
 
 	// MachineController
 	cmd.Flags().BoolVar(&opts.DeployMachineController, longFlagName(opts, "DeployMachineController"), true, "deploy kubermatic machine-controller")
-	cmd.Flags().StringVar(&opts.ImageMachineController, longFlagName(opts, "ImageMachineController"), "", "Do not overwrite image for machine controller")
 
 	// LoggingConfig
 	cmd.Flags().StringVar(
@@ -427,15 +425,6 @@ func printFeatures(cfg *yamled.Document, printOptions *printOpts) {
 		cfg.Set(yamled.Path{"features", "openidConnect", "config", "signingAlgs"}, "")
 		cfg.Set(yamled.Path{"features", "openidConnect", "config", "requiredClaim"}, "")
 		cfg.Set(yamled.Path{"features", "openidConnect", "config", "caFile"}, "")
-	}
-
-	// machine-controller
-	if !printOptions.DeployMachineController {
-		cfg.Set(yamled.Path{"machineController", "deploy"}, printOptions.DeployMachineController)
-	}
-
-	if len(printOptions.ImageMachineController) != 0 {
-		cfg.Set(yamled.Path{"machineController", "image"}, printOptions.ImageMachineController)
 	}
 
 	if printOptions.EnableEncryptionProviders {
@@ -939,7 +928,6 @@ addons:
 # case, anything you configure in your "workers" sections is ignored.
 machineController:
   deploy: {{ .DeployMachineController }}
-  image: '{{ .ImageMachineController }}'
 
 # Proxy is used to configure HTTP_PROXY, HTTPS_PROXY and NO_PROXY
 # for Docker daemon and kubelet, and to be used when provisioning cluster

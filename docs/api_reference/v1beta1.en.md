@@ -454,7 +454,6 @@ MachineControllerConfig configures kubermatic machine-controller deployment
 | Field | Description | Scheme | Required |
 | ----- | ----------- | ------ | -------- |
 | deploy | Deploy | bool | false |
-| image | Docker image for machine-controller. | string | false |
 
 [Back to Group](#v1beta1)
 

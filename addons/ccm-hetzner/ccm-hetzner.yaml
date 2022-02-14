@@ -85,15 +85,3 @@ spec:
             - name: HCLOUD_NETWORK
               value: "{{ .Config.CloudProvider.Hetzner.NetworkID }}"
             {{- end }}
-            {{ if .Config.Proxy.HTTP -}}
-            - name: HTTP_PROXY
-              value: "{{ .Config.Proxy.HTTP }}"
-            {{- end }}
-            {{ if .Config.Proxy.HTTPS -}}
-            - name: HTTPS_PROXY
-              value: "{{ .Config.Proxy.HTTPS }}"
-            {{- end }}
-            {{ if .Config.Proxy.NoProxy -}}
-            - name: NO_PROXY
-              value: "{{ .Config.Proxy.NoProxy }}"
-            {{- end }}
