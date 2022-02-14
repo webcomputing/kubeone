@@ -186,7 +186,6 @@ func SetDefaults_MachineController(obj *KubeOneCluster) {
 	if obj.MachineController == nil {
 		obj.MachineController = &MachineControllerConfig{
 			Deploy: true,
-			Image:  "",
 		}
 	}
 }
