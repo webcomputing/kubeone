@@ -17,6 +17,17 @@ limitations under the License.
 variable "cluster_name" {
   description = "prefix for cloud resources"
   type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", var.cluster_name))
+    error_message = "Value of cluster_name should be lowercase and can only contain alphanumeric characters and hyphens(-)."
+  }
+}
+
+variable "apiserver_alternative_names" {
+  description = "subject alternative names for the API Server signing cert."
+  default     = []
+  type        = list(string)
 }
 
 variable "worker_os" {

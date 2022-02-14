@@ -31,6 +31,7 @@ const (
 	OperatingSystemCentOS8 OperatingSystem = "centos"
 	OperatingSystemFlatcar OperatingSystem = "flatcar"
 	OperatingSystemAmazon  OperatingSystem = "amzn2"
+	OperatingSystemRHEL    OperatingSystem = "rhel"
 	OperatingSystemDefault OperatingSystem = ""
 )
 
@@ -45,9 +46,11 @@ func ValidateOperatingSystem(osName string) error {
 		OperatingSystemCentOS7,
 		OperatingSystemCentOS8,
 		OperatingSystemAmazon,
+		OperatingSystemRHEL,
 		OperatingSystemDefault:
 		return nil
 	}
+
 	return errors.New("failed to validate operating system")
 }
 
@@ -74,6 +77,7 @@ func ControlPlaneImageFlags(provider string, osName OperatingSystem) ([]string, 
 			}, nil
 		}
 	}
+
 	return nil, errors.New("custom operating system is not supported for selected provider")
 }
 
@@ -85,8 +89,9 @@ func sshUsername(osName OperatingSystem) (string, error) {
 		return "centos", nil
 	case OperatingSystemFlatcar:
 		return "core", nil
-	case OperatingSystemAmazon:
+	case OperatingSystemRHEL, OperatingSystemAmazon:
 		return "ec2-user", nil
+	case OperatingSystemDefault:
 	}
 
 	return "", errors.New("operating system not matched")

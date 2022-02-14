@@ -26,6 +26,12 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/pkg/errors"
+
+	"k8c.io/kubeone/pkg/templates/resources"
+)
+
+const (
+	credentialSecretName = "kube-system/kubeone-registry-credentials" //nolint:gosec
 )
 
 // Leader returns the first configured host. Only call this after
@@ -36,6 +42,7 @@ func (c KubeOneCluster) Leader() (HostConfig, error) {
 			return host, nil
 		}
 	}
+
 	return HostConfig{}, errors.New("leader not found")
 }
 
@@ -43,6 +50,7 @@ func (c KubeOneCluster) RandomHost() HostConfig {
 	//nolint:gosec
 	// G404: Use of weak random number generator (math/rand instead of crypto/rand) (gosec)
 	n := rand.Int31n(int32(len(c.ControlPlane.Hosts)))
+
 	return c.ControlPlane.Hosts[n]
 }
 
@@ -55,6 +63,7 @@ func (c KubeOneCluster) Followers() []HostConfig {
 			followers = append(followers, h)
 		}
 	}
+
 	return followers
 }
 
@@ -75,13 +84,128 @@ func (h *HostConfig) SetHostname(hostname string) {
 }
 
 // SetOperatingSystem sets the operating system for the given host
-func (h *HostConfig) SetOperatingSystem(os OperatingSystemName) {
-	h.OperatingSystem = os
+func (h *HostConfig) SetOperatingSystem(os OperatingSystemName) error {
+	if h.OperatingSystem.IsValid() {
+		h.OperatingSystem = os
+
+		return nil
+	}
+
+	return errors.Errorf("unknown operating system %q", os)
+}
+
+func (osName OperatingSystemName) IsValid() bool {
+	// linter exhaustive will make sure this switch is iterating over all current and future possibilities
+	switch osName {
+	case OperatingSystemNameUbuntu:
+	case OperatingSystemNameDebian:
+	case OperatingSystemNameCentOS:
+	case OperatingSystemNameRHEL:
+	case OperatingSystemNameAmazon:
+	case OperatingSystemNameFlatcar:
+	case OperatingSystemNameUnknown:
+	default:
+		return false
+	}
+
+	return true
 }
 
 // SetLeader sets is the given host leader
 func (h *HostConfig) SetLeader(leader bool) {
 	h.IsLeader = leader
+}
+
+func (c KubeOneCluster) OperatingSystemManagerEnabled() bool {
+	if c.Addons.Enabled() {
+		for _, embeddedAddon := range c.Addons.Addons {
+			if embeddedAddon.Name == resources.AddonOperatingSystemManager && !embeddedAddon.Delete {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (c KubeOneCluster) OperatingSystemManagerQueuedForDeletion() bool {
+	if c.Addons.Enabled() {
+		for _, embeddedAddon := range c.Addons.Addons {
+			if embeddedAddon.Name == resources.AddonOperatingSystemManager && embeddedAddon.Delete {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (crc ContainerRuntimeConfig) MachineControllerFlags() []string {
+	var mcFlags []string
+	switch {
+	case crc.Docker != nil:
+		if len(crc.Docker.RegistryMirrors) > 0 {
+			mcFlags = append(mcFlags,
+				fmt.Sprintf("-node-registry-mirrors=%s", strings.Join(crc.Docker.RegistryMirrors, ",")),
+			)
+		}
+	case crc.Containerd != nil:
+		// example output:
+		// -node-containerd-registry-mirrors=docker.io=custom.tld
+		// -node-containerd-registry-mirrors=docker.io=https://secure-custom.tld
+		// -node-containerd-registry-mirrors=k8s.gcr.io=http://somewhere
+		// -node-insecure-registries=docker.io,k8s.gcr.io
+		var (
+			registryNames                 []string
+			insecureSet                   = map[string]struct{}{}
+			registryCredentialsSecretFlag bool
+		)
+
+		for registry := range crc.Containerd.Registries {
+			registryNames = append(registryNames, registry)
+		}
+
+		// because iterating over map is randomized, we need this to have a "stable" output list
+		sort.Strings(registryNames)
+
+		for _, registryName := range registryNames {
+			containerdRegistry := crc.Containerd.Registries[registryName]
+			if containerdRegistry.TLSConfig != nil && containerdRegistry.TLSConfig.InsecureSkipVerify {
+				insecureSet[registryName] = struct{}{}
+			}
+
+			for _, mirror := range containerdRegistry.Mirrors {
+				mcFlags = append(mcFlags,
+					fmt.Sprintf("-node-containerd-registry-mirrors=%s=%s", registryName, mirror),
+				)
+			}
+
+			if containerdRegistry.Auth != nil {
+				registryCredentialsSecretFlag = true
+			}
+		}
+
+		if registryCredentialsSecretFlag {
+			mcFlags = append(mcFlags,
+				fmt.Sprintf("-node-registry-credentials-secret=%s", credentialSecretName),
+			)
+		}
+
+		if len(insecureSet) > 0 {
+			insecureNames := []string{}
+
+			for insecureName := range insecureSet {
+				insecureNames = append(insecureNames, insecureName)
+			}
+
+			sort.Strings(insecureNames)
+			mcFlags = append(mcFlags,
+				fmt.Sprintf("-node-insecure-registries=%s", strings.Join(insecureNames, ",")),
+			)
+		}
+	}
+
+	return mcFlags
 }
 
 func (crc ContainerRuntimeConfig) String() string {
@@ -108,6 +232,17 @@ func (crc *ContainerRuntimeConfig) UnmarshalText(text []byte) error {
 	return nil
 }
 
+func (crc ContainerRuntimeConfig) ConfigPath() string {
+	switch {
+	case crc.Containerd != nil:
+		return "/etc/containerd/config.toml"
+	case crc.Docker != nil:
+		return "/etc/docker/daemon.json"
+	}
+
+	return ""
+}
+
 func (crc ContainerRuntimeConfig) CRISocket() string {
 	switch {
 	case crc.Containerd != nil:
@@ -132,10 +267,12 @@ func (p CloudProviderSpec) CloudProviderName() string {
 		return "gce"
 	case p.Hetzner != nil:
 		return "hetzner"
+	case p.Nutanix != nil:
+		return "nutanix"
 	case p.Openstack != nil:
 		return "openstack"
-	case p.Packet != nil:
-		return "packet"
+	case p.EquinixMetal != nil:
+		return "equinixmetal"
 	case p.Vsphere != nil:
 		return "vsphere"
 	case p.None != nil:
@@ -148,9 +285,9 @@ func (p CloudProviderSpec) CloudProviderName() string {
 // CloudProviderInTree detects is there in-tree cloud provider implementation for specified provider.
 // List of in-tree provider can be found here: https://github.com/kubernetes/kubernetes/tree/master/pkg/cloudprovider
 func (p CloudProviderSpec) CloudProviderInTree() bool {
-	if p.Openstack != nil || p.Vsphere != nil {
+	if p.AWS != nil || p.Azure != nil || p.Openstack != nil || p.Vsphere != nil {
 		return !p.External
-	} else if p.AWS != nil || p.GCE != nil || p.Azure != nil {
+	} else if p.GCE != nil {
 		return true
 	}
 
@@ -161,7 +298,7 @@ func (p CloudProviderSpec) CloudProviderInTree() bool {
 // NB: The CSI migration can be supported only if KubeOne supports CSI plugin and driver
 // for the provider
 func (p CloudProviderSpec) CSIMigrationSupported() bool {
-	return p.External && (p.Openstack != nil || p.Vsphere != nil)
+	return p.External && (p.Azure != nil || p.Openstack != nil || p.Vsphere != nil)
 }
 
 // CSIMigrationFeatureGates returns CSI migration feature gates in form of a map
@@ -172,56 +309,65 @@ func (p CloudProviderSpec) CSIMigrationSupported() bool {
 // (https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/)
 // This is a KubeOneCluster function because feature gates are Kubernetes-version dependent.
 func (c KubeOneCluster) CSIMigrationFeatureGates(complete bool) (map[string]bool, string, error) {
+	var featureGates map[string]bool
+
 	switch {
+	case c.CloudProvider.Azure != nil:
+		featureGates = map[string]bool{
+			"CSIMigrationAzureDisk": true,
+			"CSIMigrationAzureFile": true,
+		}
 	case c.CloudProvider.Openstack != nil:
-		featureGates := map[string]bool{
+		featureGates = map[string]bool{
 			"CSIMigrationOpenStack": true,
 			"ExpandCSIVolumes":      true,
 		}
-
-		unregister := c.InTreePluginUnregisterFeatureGate()
-		if complete && unregister != "" {
-			featureGates[unregister] = true
-		}
-
-		return featureGates, marshalFeatureGates(featureGates), nil
 	case c.CloudProvider.Vsphere != nil:
-		featureGates := map[string]bool{
+		featureGates = map[string]bool{
 			"CSIMigrationvSphere": true,
 		}
-
-		unregister := c.InTreePluginUnregisterFeatureGate()
-		if complete && unregister != "" {
-			featureGates[unregister] = true
-		}
-
-		return featureGates, marshalFeatureGates(featureGates), nil
+	default:
+		return nil, "", errors.New("csi migration is not supported for selected provider")
 	}
 
-	return nil, "", errors.New("csi migration is not supported for selected provider")
+	if complete {
+		for _, u := range c.InTreePluginUnregisterFeatureGate() {
+			featureGates[u] = true
+		}
+	}
+
+	return featureGates, marshalFeatureGates(featureGates), nil
 }
 
 // CSIMigrationFeatureGates returns the name of the feature gate that's supposed to
 // unregister the in-tree cloud provider.
 // NB: This is a KubeOneCluster function because feature gates are Kubernetes-version dependent.
-func (c KubeOneCluster) InTreePluginUnregisterFeatureGate() string {
+func (c KubeOneCluster) InTreePluginUnregisterFeatureGate() []string {
 	lessThan21, _ := semver.NewConstraint("< 1.21.0")
 	ver, _ := semver.NewVersion(c.Versions.Kubernetes)
 
 	switch {
+	case c.CloudProvider.Azure != nil:
+		if lessThan21.Check(ver) {
+			return []string{"CSIMigrationAzureDiskComplete", "CSIMigrationAzureFileComplete"}
+		}
+
+		return []string{"InTreePluginAzureDiskUnregister", "InTreePluginAzureFileUnregister"}
 	case c.CloudProvider.Openstack != nil:
 		if lessThan21.Check(ver) {
-			return "CSIMigrationOpenStackComplete"
+			return []string{"CSIMigrationOpenStackComplete"}
 		}
-		return "InTreePluginOpenStackUnregister"
+
+		return []string{"InTreePluginOpenStackUnregister"}
 	case c.CloudProvider.Vsphere != nil:
 		if lessThan21.Check(ver) {
-			return "CSIMigrationvSphereComplete"
+			return []string{"CSIMigrationvSphereComplete"}
 		}
-		return "InTreePluginvSphereUnregister"
+
+		return []string{"InTreePluginvSphereUnregister"}
 	}
 
-	return ""
+	return nil
 }
 
 func marshalFeatureGates(fgm map[string]bool) string {
@@ -231,6 +377,7 @@ func marshalFeatureGates(fgm map[string]bool) string {
 	}
 
 	sort.Strings(keys)
+
 	return strings.Join(keys, ",")
 }
 
@@ -240,6 +387,7 @@ func (r *RegistryConfiguration) ImageRegistry(defaultRegistry string) string {
 	if r != nil && r.OverwriteRegistry != "" {
 		return r.OverwriteRegistry
 	}
+
 	return defaultRegistry
 }
 
@@ -250,6 +398,7 @@ func (r *RegistryConfiguration) InsecureRegistryAddress() string {
 	if r != nil && r.InsecureRegistry {
 		insecureRegistry = r.OverwriteRegistry
 	}
+
 	return insecureRegistry
 }
 
@@ -270,4 +419,52 @@ func (ads *Addons) RelativePath(manifestFilePath string) (string, error) {
 	}
 
 	return addonsPath, nil
+}
+
+// DefaultAssetConfiguration determines what image repository should be used
+// for Kubernetes and metrics-server images. The AssetsConfiguration has the
+// highest priority, then comes the RegistryConfiguration.
+// This function is needed because the AssetsConfiguration API has been removed
+// in the v1beta2 API, so we can't use defaulting
+func (c KubeOneCluster) DefaultAssetConfiguration() {
+	if c.RegistryConfiguration == nil || c.RegistryConfiguration.OverwriteRegistry == "" {
+		// We default AssetConfiguration only if RegistryConfiguration.OverwriteRegistry
+		// is used
+		return
+	}
+
+	c.AssetConfiguration.Kubernetes.ImageRepository = defaults(
+		c.AssetConfiguration.Kubernetes.ImageRepository,
+		c.RegistryConfiguration.OverwriteRegistry,
+	)
+	c.AssetConfiguration.CoreDNS.ImageRepository = defaults(
+		c.AssetConfiguration.CoreDNS.ImageRepository,
+		c.RegistryConfiguration.OverwriteRegistry,
+	)
+	c.AssetConfiguration.Etcd.ImageRepository = defaults(
+		c.AssetConfiguration.Etcd.ImageRepository,
+		c.RegistryConfiguration.OverwriteRegistry,
+	)
+	c.AssetConfiguration.MetricsServer.ImageRepository = defaults(
+		c.AssetConfiguration.MetricsServer.ImageRepository,
+		c.RegistryConfiguration.OverwriteRegistry,
+	)
+}
+
+func defaults(input, defaultValue string) string {
+	if input != "" {
+		return input
+	}
+
+	return defaultValue
+}
+
+func MapStringStringToString(m1 map[string]string, pairSeparator string) string {
+	var pairs []string
+	for k, v := range m1 {
+		pairs = append(pairs, fmt.Sprintf("%s%s%s", k, pairSeparator, v))
+	}
+	sort.Strings(pairs)
+
+	return strings.Join(pairs, ",")
 }

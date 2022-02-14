@@ -19,7 +19,6 @@ package v1beta3
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
@@ -28,6 +27,7 @@ import (
 	bootstraptokenv1 "k8c.io/kubeone/pkg/apis/kubeadm/bootstraptoken/v1"
 	kubeadmv1beta3 "k8c.io/kubeone/pkg/apis/kubeadm/v1beta3"
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
+	"k8c.io/kubeone/pkg/certificate"
 	"k8c.io/kubeone/pkg/features"
 	"k8c.io/kubeone/pkg/kubeflags"
 	"k8c.io/kubeone/pkg/state"
@@ -112,6 +112,7 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 		},
 	}
 
+	certSANS := certificate.GetCertificateSANs(cluster.APIEndpoint.Host, cluster.APIEndpoint.AlternativeNames)
 	clusterConfig := &kubeadmv1beta3.ClusterConfiguration{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "kubeadm.k8s.io/v1beta3",
@@ -133,7 +134,7 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 				},
 				ExtraVolumes: []kubeadmv1beta3.HostPathMount{},
 			},
-			CertSANs: []string{strings.ToLower(cluster.APIEndpoint.Host)},
+			CertSANs: certSANS,
 		},
 		ControllerManager: kubeadmv1beta3.ControlPlaneComponent{
 			ExtraArgs: map[string]string{
@@ -165,10 +166,13 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 			APIVersion: "kubelet.config.k8s.io/v1beta1",
 			Kind:       "KubeletConfiguration",
 		},
-		CgroupDriver:       "systemd",
-		ReadOnlyPort:       0,
-		RotateCertificates: true,
-		ClusterDNS:         []string{resources.NodeLocalDNSVirtualIP},
+		CgroupDriver:         "systemd",
+		ReadOnlyPort:         0,
+		RotateCertificates:   true,
+		ServerTLSBootstrap:   true,
+		ClusterDNS:           []string{resources.NodeLocalDNSVirtualIP},
+		ContainerLogMaxSize:  cluster.LoggingConfig.ContainerLogMaxSize,
+		ContainerLogMaxFiles: &cluster.LoggingConfig.ContainerLogMaxFiles,
 		Authentication: kubeletconfigv1beta1.KubeletAuthentication{
 			Anonymous: kubeletconfigv1beta1.KubeletAnonymousAuthentication{
 				Enabled: &bfalse,
@@ -356,10 +360,13 @@ func NewConfigWorker(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Obje
 			APIVersion: "kubelet.config.k8s.io/v1beta1",
 			Kind:       "KubeletConfiguration",
 		},
-		CgroupDriver:       "systemd",
-		ReadOnlyPort:       0,
-		RotateCertificates: true,
-		ClusterDNS:         []string{resources.NodeLocalDNSVirtualIP},
+		CgroupDriver:         "systemd",
+		ReadOnlyPort:         0,
+		RotateCertificates:   true,
+		ServerTLSBootstrap:   true,
+		ClusterDNS:           []string{resources.NodeLocalDNSVirtualIP},
+		ContainerLogMaxSize:  cluster.LoggingConfig.ContainerLogMaxSize,
+		ContainerLogMaxFiles: &cluster.LoggingConfig.ContainerLogMaxFiles,
 		Authentication: kubeletconfigv1beta1.KubeletAuthentication{
 			Anonymous: kubeletconfigv1beta1.KubeletAnonymousAuthentication{
 				Enabled: &bfalse,
@@ -411,14 +418,28 @@ func newNodeIP(host kubeoneapi.HostConfig) string {
 }
 
 func newNodeRegistration(s *state.State, host kubeoneapi.HostConfig) kubeadmv1beta3.NodeRegistrationOptions {
+	kubeletCLIFlags := map[string]string{
+		"node-ip":           newNodeIP(host),
+		"volume-plugin-dir": "/var/lib/kubelet/volumeplugins",
+	}
+
+	if m := host.Kubelet.SystemReserved; m != nil {
+		kubeletCLIFlags["system-reserved"] = kubeoneapi.MapStringStringToString(m, "=")
+	}
+
+	if m := host.Kubelet.KubeReserved; m != nil {
+		kubeletCLIFlags["kube-reserved"] = kubeoneapi.MapStringStringToString(m, "=")
+	}
+
+	if m := host.Kubelet.EvictionHard; m != nil {
+		kubeletCLIFlags["eviction-hard"] = kubeoneapi.MapStringStringToString(m, "<")
+	}
+
 	return kubeadmv1beta3.NodeRegistrationOptions{
-		Name:      host.Hostname,
-		Taints:    host.Taints,
-		CRISocket: s.Cluster.ContainerRuntime.CRISocket(),
-		KubeletExtraArgs: map[string]string{
-			"node-ip":           newNodeIP(host),
-			"volume-plugin-dir": "/var/lib/kubelet/volumeplugins",
-		},
+		Name:             host.Hostname,
+		Taints:           host.Taints,
+		CRISocket:        s.Cluster.ContainerRuntime.CRISocket(),
+		KubeletExtraArgs: kubeletCLIFlags,
 	}
 }
 

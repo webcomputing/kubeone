@@ -29,18 +29,32 @@ import (
 	dynclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const (
+	machineDeploymentsDocsLink = `https://docs.kubermatic.com/kubeone/v1.3/guides/machine_controller/`
+)
+
 func createMachineDeployments(s *state.State) error {
 	if len(s.Cluster.DynamicWorkers) == 0 {
 		return nil
 	}
 
+	if !s.CreateMachineDeployments {
+		s.Logger.Info("Skipped creating MachineDeployments.")
+
+		return nil
+	}
+
 	s.Logger.Infoln("Creating worker machines...")
+	s.Logger.Warnln("KubeOne will not manage MachineDeployments objects besides initially creating them and optionally upgrading them...")
+	s.Logger.Warnf("For more info about MachineDeployments see: %s", machineDeploymentsDocsLink)
+
 	return errors.Wrap(machinecontroller.CreateMachineDeployments(s), "failed to deploy Machines")
 }
 
 func upgradeMachineDeployments(s *state.State) error {
 	if !s.UpgradeMachineDeployments {
 		s.Logger.Info("Upgrade MachineDeployments skip per lack of flag...")
+
 		return nil
 	}
 
@@ -66,6 +80,7 @@ func upgradeMachineDeployments(s *state.State) error {
 			}
 
 			machine.Spec.Template.Spec.Versions.Kubelet = s.Cluster.Versions.Kubernetes
+
 			return s.DynamicClient.Update(s.Context, &machine)
 		})
 

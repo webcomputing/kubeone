@@ -17,6 +17,17 @@ limitations under the License.
 variable "cluster_name" {
   description = "Name of the cluster"
   type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", var.cluster_name))
+    error_message = "Value of cluster_name should be lowercase and can only contain alphanumeric characters and hyphens(-)."
+  }
+}
+
+variable "apiserver_alternative_names" {
+  description = "subject alternative names for the API Server signing cert."
+  default     = []
+  type        = list(string)
 }
 
 variable "worker_os" {
@@ -100,7 +111,7 @@ variable "image" {
 variable "image_properties_query" {
   default = {
     os_distro  = "ubuntu"
-    os_version = "18.04"
+    os_version = "20.04"
   }
   description = "in absense of var.image, this will be used to query API for the image"
   type        = map(any)
@@ -121,4 +132,3 @@ variable "subnet_dns_servers" {
   type    = list(string)
   default = ["8.8.8.8", "8.8.4.4"]
 }
-

@@ -28,7 +28,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"k8c.io/kubeone/pkg/credentials"
 	"k8c.io/kubeone/pkg/state"
 	"k8c.io/kubeone/pkg/tasks"
 
@@ -46,6 +45,7 @@ type applyOpts struct {
 	// Upgrade flags
 	ForceUpgrade              bool `longflag:"force-upgrade"`
 	UpgradeMachineDeployments bool `longflag:"upgrade-machine-deployments"`
+	CreateMachineDeployments  bool `longflag:"create-machine-deployments"`
 	RotateEncryptionKey       bool `longflag:"rotate-encryption-key"`
 }
 
@@ -59,6 +59,7 @@ func (opts *applyOpts) BuildState() (*state.State, error) {
 	s.ForceInstall = opts.ForceInstall
 	s.ForceUpgrade = opts.ForceUpgrade
 	s.UpgradeMachineDeployments = opts.UpgradeMachineDeployments
+	s.CreateMachineDeployments = opts.CreateMachineDeployments
 
 	if s.BackupFile == "" {
 		fullPath, _ := filepath.Abs(opts.ManifestFile)
@@ -150,6 +151,12 @@ func applyCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 		"upgrade MachineDeployments objects")
 
 	cmd.Flags().BoolVar(
+		&opts.CreateMachineDeployments,
+		longFlagName(opts, "CreateMachineDeployments"),
+		true,
+		"create MachineDeployments objects")
+
+	cmd.Flags().BoolVar(
 		&opts.RotateEncryptionKey,
 		longFlagName(opts, "RotateEncryptionKey"),
 		false,
@@ -165,9 +172,8 @@ func runApply(opts *applyOpts) error {
 	}
 
 	// Validate credentials
-	_, err = credentials.ProviderCredentials(s.Cluster.CloudProvider, opts.CredentialsFile)
-	if err != nil {
-		return errors.Wrap(err, "failed to validate credentials")
+	if vErr := validateCredentials(s, opts.CredentialsFile); vErr != nil {
+		return vErr
 	}
 
 	// Probe the cluster for the actual state and the needed tasks.
@@ -197,6 +203,7 @@ func runApply(opts *applyOpts) error {
 	if !s.LiveCluster.Healthy() {
 		if opts.RotateEncryptionKey {
 			s.Logger.Errorln("cluster is not healthy, encryption key rotation is not supported")
+
 			return errors.New("cluster is not healthy, encryption key rotation is not supported")
 		}
 
@@ -225,6 +232,7 @@ func runApply(opts *applyOpts) error {
 		for _, node := range s.LiveCluster.ControlPlane {
 			if !node.IsInCluster {
 				runRepair = true
+
 				break
 			}
 		}
@@ -233,6 +241,7 @@ func runApply(opts *applyOpts) error {
 			for _, node := range s.LiveCluster.StaticWorkers {
 				if !node.IsInCluster {
 					runRepair = true
+
 					break
 				}
 			}
@@ -243,6 +252,7 @@ func runApply(opts *applyOpts) error {
 			s.Logger.Warnf("Requested version: %s\n", s.Cluster.Versions.Kubernetes)
 			s.Logger.Warnf("Highest version: %s\n", higherVer)
 			s.Logger.Warnf("Use version %s to repair the cluster, then run apply with the new version\n", higherVer)
+
 			return errors.New("repair and upgrade are not supported at the same time")
 		}
 
@@ -266,6 +276,7 @@ func runApply(opts *applyOpts) error {
 			s.Cluster.Features.EncryptionProviders.CustomEncryptionConfiguration != "" {
 			return errors.New("key rotation of custom providers file is not supported")
 		}
+
 		return runApplyRotateKey(s, opts)
 	}
 
@@ -288,7 +299,7 @@ func runApplyInstall(s *state.State, opts *applyOpts) error { // Print the expec
 
 	for _, node := range s.LiveCluster.StaticWorkers {
 		if !node.IsInCluster {
-			fmt.Printf("\t+ join worker node %q (%s)\n", node.Config.Hostname, node.Config.PrivateAddress)
+			fmt.Printf("\t+ join static worker node %q (%s)\n", node.Config.Hostname, node.Config.PrivateAddress)
 		}
 	}
 
@@ -304,8 +315,10 @@ func runApplyInstall(s *state.State, opts *applyOpts) error { // Print the expec
 		fmt.Printf("\t+ ensure machinedeployment %q with %d replica(s) exists\n", node.Name, resolveInt(node.Replicas))
 	}
 
-	if s.Cluster.Addons != nil && s.Cluster.Addons.Enable {
-		fmt.Printf("\t+ apply addons defined in %q\n", s.Cluster.Addons.Path)
+	if s.Cluster.Addons.Enabled() && s.Cluster.Addons.Path != "" {
+		fmt.Printf("\t+ apply embedded and custom addons defined in %q\n", s.Cluster.Addons.Path)
+	} else if s.Cluster.Addons.Enabled() {
+		fmt.Print("\t+ apply embedded addons")
 	}
 
 	fmt.Println()
@@ -316,6 +329,7 @@ func runApplyInstall(s *state.State, opts *applyOpts) error { // Print the expec
 
 	if !confirm {
 		s.Logger.Println("Operation canceled.")
+
 		return nil
 	}
 
@@ -335,6 +349,7 @@ func runApplyUpgradeIfNeeded(s *state.State, opts *applyOpts) error {
 	upgradeNeeded, err := s.LiveCluster.UpgradeNeeded()
 	if err != nil {
 		s.Logger.Errorf("Upgrade not allowed: %v\n", err)
+
 		return err
 	}
 
@@ -420,6 +435,7 @@ func runApplyUpgradeIfNeeded(s *state.State, opts *applyOpts) error {
 
 	if !confirm {
 		s.Logger.Println("Operation canceled.")
+
 		return nil
 	}
 
@@ -429,10 +445,12 @@ func runApplyUpgradeIfNeeded(s *state.State, opts *applyOpts) error {
 func runApplyRotateKey(s *state.State, opts *applyOpts) error {
 	if !opts.ForceUpgrade {
 		s.Logger.Error("rotating encryption keys requires the --force-upgrade flag")
+
 		return errors.New("rotating encryption keys requires the --force-upgrade flag")
 	}
 	if !s.EncryptionEnabled() {
 		s.Logger.Error("rotating encryption keys failed: Encryption Providers support is not enabled")
+
 		return errors.New("rotating encryption keys failed: Encryption Providers support is not enabled")
 	}
 
@@ -452,8 +470,10 @@ func runApplyRotateKey(s *state.State, opts *applyOpts) error {
 
 	if !confirm {
 		s.Logger.Println("Operation canceled.")
+
 		return nil
 	}
+
 	return errors.Wrap(tasksToRun.Run(s), "failed to reconcile the cluster")
 }
 
@@ -495,6 +515,7 @@ func boolStr(b bool) string {
 	if b {
 		return yes
 	}
+
 	return "no"
 }
 
@@ -502,6 +523,7 @@ func resolveInt(i *int) int {
 	if i == nil {
 		return 0
 	}
+
 	return *i
 }
 
@@ -509,5 +531,6 @@ func printVersion(version *semver.Version) string {
 	if version == nil {
 		return "unknown"
 	}
+
 	return version.String()
 }

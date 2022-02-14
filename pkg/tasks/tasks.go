@@ -26,10 +26,9 @@ import (
 	"k8c.io/kubeone/pkg/features"
 	"k8c.io/kubeone/pkg/kubeconfig"
 	"k8c.io/kubeone/pkg/state"
-	"k8c.io/kubeone/pkg/templates/csi"
 	"k8c.io/kubeone/pkg/templates/externalccm"
 	"k8c.io/kubeone/pkg/templates/machinecontroller"
-	"k8c.io/kubeone/pkg/templates/resources"
+	"k8c.io/kubeone/pkg/templates/operatingsystemmanager"
 )
 
 type Tasks []Task
@@ -111,12 +110,24 @@ func WithHostnameOSAndProbes(t Tasks) Tasks {
 // WithFullInstall with install binaries (using WithBinariesOnly) and
 // orchestrate complete cluster init
 func WithFullInstall(t Tasks) Tasks {
-	return WithBinariesOnly(t).
+	return WithHostnameOSAndProbes(t).append(Tasks{
+		{
+			Fn: func(s *state.State) error {
+				return s.RunTaskOnAllNodes(disableNMCloudSetup, state.RunParallel)
+			},
+			ErrMsg: "failed to disable nm-cloud-setup",
+		},
+		{
+			Fn:     installPrerequisites,
+			ErrMsg: "failed to install prerequisites",
+		},
+	}...).
 		append(kubernetesConfigFiles()...).
 		append(Tasks{
 			{
 				Fn: func(s *state.State) error {
 					s.Logger.Infoln("Configuring certs and etcd on control plane node...")
+
 					return s.RunTaskOnLeader(kubeadmCertsExecutor)
 				},
 				ErrMsg: "failed to provision certs and etcd on leader",
@@ -124,6 +135,7 @@ func WithFullInstall(t Tasks) Tasks {
 			{
 				Fn: func(s *state.State) error {
 					s.Logger.Info("Downloading PKI...")
+
 					return s.RunTaskOnLeader(certificate.DownloadKubePKI)
 				},
 				ErrMsg: "failed to download Kubernetes PKI from the leader",
@@ -131,6 +143,7 @@ func WithFullInstall(t Tasks) Tasks {
 			{
 				Fn: func(s *state.State) error {
 					s.Logger.Info("Uploading PKI...")
+
 					return s.RunTaskOnFollowers(certificate.UploadKubePKI, state.RunParallel)
 				},
 				ErrMsg: "failed to upload Kubernetes PKI",
@@ -138,19 +151,30 @@ func WithFullInstall(t Tasks) Tasks {
 			{
 				Fn: func(s *state.State) error {
 					s.Logger.Infoln("Configuring certs and etcd on consecutive control plane node...")
+
 					return s.RunTaskOnFollowers(kubeadmCertsExecutor, state.RunParallel)
 				},
 				ErrMsg: "failed to provision certs and etcd on followers",
 			},
 			{Fn: initKubernetesLeader, ErrMsg: "failed to init kubernetes on leader"},
 			{Fn: kubeconfig.BuildKubernetesClientset, ErrMsg: "failed to build kubernetes clientset"},
+			{
+				Fn: func(s *state.State) error {
+					return s.RunTaskOnLeader(approvePendingCSR)
+				},
+				ErrMsg: "failed to approve leader's kubelet CSR",
+			},
 			{Fn: repairClusterIfNeeded, ErrMsg: "failed to repair cluster"},
 			{Fn: joinControlplaneNode, ErrMsg: "failed to join other masters a cluster"},
 			{Fn: restartKubeAPIServer, ErrMsg: "failed to restart unhealthy kube-apiserver"},
 		}...).
 		append(WithResources(nil)...).
 		append(
-			Task{Fn: createMachineDeployments, ErrMsg: "failed to create worker machines"},
+			Task{
+				Fn:        createMachineDeployments,
+				ErrMsg:    "failed to create worker machines",
+				Predicate: func(s *state.State) bool { return !s.LiveCluster.IsProvisioned() },
+			},
 		)
 }
 
@@ -182,17 +206,10 @@ func WithResources(t Tasks) Tasks {
 			{
 				Fn: func(s *state.State) error {
 					s.Logger.Info("Downloading PKI...")
+
 					return s.RunTaskOnLeader(certificate.DownloadKubePKI)
 				},
 				ErrMsg: "failed to download Kubernetes PKI from the leader",
-			},
-			{
-				Fn: func(s *state.State) error {
-					s.Logger.Infoln("Ensure node local DNS cache...")
-					return addons.EnsureAddonByName(s, resources.AddonNodeLocalDNS)
-				},
-				ErrMsg:      "failed to deploy nodelocaldns",
-				Description: "ensure nodelocaldns",
 			},
 			{
 				Fn:     features.Activate,
@@ -201,6 +218,11 @@ func WithResources(t Tasks) Tasks {
 			{
 				Fn:     patchCoreDNS,
 				ErrMsg: "failed to patch CoreDNS",
+			},
+			{
+				Fn:          addons.Ensure,
+				ErrMsg:      "failed to apply addons",
+				Description: "ensure embedded addons",
 			},
 			{
 				Fn:          ensureCNI,
@@ -217,7 +239,7 @@ func WithResources(t Tasks) Tasks {
 			{
 				Fn:          addons.EnsureUserAddons,
 				ErrMsg:      "failed to apply addons",
-				Description: "ensure addons",
+				Description: "ensure custom addons",
 				Predicate:   func(s *state.State) bool { return s.Cluster.Addons != nil && s.Cluster.Addons.Enable },
 			},
 			{
@@ -232,12 +254,6 @@ func WithResources(t Tasks) Tasks {
 				Predicate:   func(s *state.State) bool { return s.Cluster.CloudProvider.External },
 			},
 			{
-				Fn:          csi.Ensure,
-				ErrMsg:      "failed to ensure CSI driver",
-				Description: "ensure CSI driver",
-				Predicate:   func(s *state.State) bool { return s.Cluster.CloudProvider.External },
-			},
-			{
 				Fn:     joinStaticWorkerNodes,
 				ErrMsg: "failed to join worker nodes to the cluster",
 			},
@@ -246,20 +262,13 @@ func WithResources(t Tasks) Tasks {
 				ErrMsg: "failed to label nodes with their OS",
 			},
 			{
-				Fn:          machinecontroller.Ensure,
-				ErrMsg:      "failed to ensure machine-controller",
-				Description: "ensure machine-controller",
-				Predicate:   func(s *state.State) bool { return s.Cluster.MachineController.Deploy },
-			},
-			{
 				Fn:     machinecontroller.WaitReady,
 				ErrMsg: "failed to wait for machine-controller",
 			},
 			{
-				Fn:          upgradeMachineDeployments,
-				ErrMsg:      "failed to upgrade MachineDeployments",
-				Description: "upgrade MachineDeployments",
-				Predicate:   func(s *state.State) bool { return s.UpgradeMachineDeployments },
+				Fn:        operatingsystemmanager.WaitReady,
+				ErrMsg:    "failed to wait for operating-system-manager",
+				Predicate: func(s *state.State) bool { return s.Cluster.OperatingSystemManagerEnabled() },
 			},
 		}...,
 	)
@@ -276,6 +285,7 @@ func WithUpgrade(t Tasks) Tasks {
 			{
 				Fn: func(s *state.State) error {
 					s.Logger.Info("Downloading PKI...")
+
 					return s.RunTaskOnLeader(certificate.DownloadKubePKI)
 				},
 				ErrMsg: "failed to download Kubernetes PKI from the leader",
@@ -312,21 +322,23 @@ func WithContainerDMigration(t Tasks) Tasks {
 			{
 				Fn: func(s *state.State) error {
 					s.Logger.Info("Downloading PKI...")
+
 					return s.RunTaskOnLeader(certificate.DownloadKubePKI)
 				},
 				ErrMsg: "failed to download Kubernetes PKI from the leader",
 			},
 			{
+				Fn:          addons.Ensure,
+				ErrMsg:      "failed to apply addons",
+				Description: "ensure embedded addons",
+			},
+			{
 				Fn: func(s *state.State) error {
-					if err := machinecontroller.Ensure(s); err != nil {
-						return err
-					}
-
 					s.Logger.Warn("Now please rolling restart your machineDeployments to get containerd")
 					s.Logger.Warn("see more at: https://docs.kubermatic.com/kubeone/v1.3/cheat_sheets/rollout_machinedeployment/")
+
 					return nil
 				},
-				ErrMsg:    "failed to ensure machine-controller",
 				Predicate: func(s *state.State) bool { return s.Cluster.MachineController.Deploy },
 			},
 		}...)
@@ -370,6 +382,7 @@ func WithDisableEncryptionProviders(t Tasks, customConfig bool) Tasks {
 			},
 		}...)
 	}
+
 	return t.append(Tasks{
 		{
 			Fn:          fetchEncryptionProvidersFile,
@@ -492,6 +505,7 @@ func WithCCMCSIMigration(t Tasks) Tasks {
 					s.Logger.Warn("Now please rolling restart your machineDeployments to migrate to ccm/csi")
 					s.Logger.Warn("see more at: https://docs.kubermatic.com/kubeone/v1.3/cheat_sheets/rollout_machinedeployment/")
 					s.Logger.Warn("Once you're done, please run this command again with the '--complete' flag to finish migration")
+
 					return nil
 				},
 				ErrMsg:    "failed to show next steps",

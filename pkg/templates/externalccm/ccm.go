@@ -22,9 +22,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	"k8c.io/kubeone/pkg/addons"
 	"k8c.io/kubeone/pkg/state"
-	"k8c.io/kubeone/pkg/templates/resources"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -40,37 +38,7 @@ func Ensure(s *state.State) error {
 		return nil
 	}
 
-	s.Logger.Info("Ensure external CCM is up to date...")
-	var err error
-
-	switch {
-	case s.Cluster.CloudProvider.Hetzner != nil:
-		err = addons.EnsureAddonByName(s, resources.AddonCCMHetzner)
-	case s.Cluster.CloudProvider.DigitalOcean != nil:
-		err = addons.EnsureAddonByName(s, resources.AddonCCMDigitalOcean)
-	case s.Cluster.CloudProvider.Packet != nil:
-		err = addons.EnsureAddonByName(s, resources.AddonCCMPacket)
-	case s.Cluster.CloudProvider.Openstack != nil:
-		if s.Cluster.CloudProvider.CloudConfig == "" {
-			return errors.New("cloudConfig not defined")
-		}
-		err = addons.EnsureAddonByName(s, resources.AddonCCMOpenStack)
-	case s.Cluster.CloudProvider.Vsphere != nil:
-		if mErr := migrateVsphereAddon(s); mErr != nil {
-			return errors.Wrap(err, "failed to migrate to vsphere addon")
-		}
-		err = addons.EnsureAddonByName(s, resources.AddonCCMVsphere)
-	default:
-		s.Logger.Infof("External CCM for %q not yet supported, skipping", s.Cluster.CloudProvider.CloudProviderName())
-		return nil
-	}
-
-	if err != nil {
-		return errors.Wrap(err, "failed to ensure CCM is installed")
-	}
-
-	err = waitForInitializedNodes(s)
-	return errors.Wrap(err, "failed waiting for nodes to be initialized by CCM")
+	return errors.Wrap(waitForInitializedNodes(s), "failed waiting for nodes to be initialized by CCM")
 }
 
 func waitForInitializedNodes(s *state.State) error {

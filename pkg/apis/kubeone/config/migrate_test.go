@@ -24,7 +24,7 @@ import (
 
 	yaml "gopkg.in/yaml.v2"
 
-	kubeonev1beta1 "k8c.io/kubeone/pkg/apis/kubeone/v1beta1"
+	kubeonev1beta2 "k8c.io/kubeone/pkg/apis/kubeone/v1beta2"
 	"k8c.io/kubeone/pkg/testhelper"
 
 	kyaml "sigs.k8s.io/yaml"
@@ -35,65 +35,58 @@ var update = flag.Bool("update", false, "update .golden files")
 func TestMigrateOldConfig(t *testing.T) {
 	testcases := []struct {
 		name string
+		err  string
 	}{
 		{
+			name: "config-addons-1",
+		},
+		{
+			name: "config-addons-2",
+		},
+		{
+			name: "config-addons-3",
+		},
+		{
+			name: "config-addons-4",
+		},
+		{
+			name: "config-addons-5",
+		},
+		{
+			name: "config-addons-6",
+		},
+		{
+			name: "config-assetconfig",
+			err:  "the AssetConfiguration API has been removed from the v1beta2 API, please check the docs for information on how to migrate",
+		},
+		{
 			name: "config-aws",
-		},
-		{
-			name: "config-azure",
-		},
-		{
-			name: "config-digitalocean",
-		},
-		{
-			name: "config-gce",
-		},
-		{
-			name: "config-hetzner",
-		},
-		{
-			name: "config-hetzner-networkid",
-		},
-		{
-			name: "config-openstack",
-		},
-		{
-			name: "config-packet",
-		},
-		{
-			name: "config-vsphere",
-		},
-		{
-			name: "config-none",
 		},
 		{
 			name: "config-full",
 		},
 		{
-			name: "config-full-example",
+			name: "config-packet",
 		},
 		{
-			name: "config-cni-canal",
+			name: "config-podpresets-1",
 		},
 		{
-			name: "config-cni-canal-encrypted",
+			name: "config-podpresets-2",
 		},
 		{
-			name: "config-cni-weave-net",
-		},
-		{
-			name: "config-cni-weave-net-encrypted",
-		},
-		{
-			name: "config-cni-external",
+			name: "config-podpresets-3",
 		},
 	}
 
 	for _, tc := range testcases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			newConfigYAML, err := MigrateOldConfig(filepath.Join("testdata", tc.name+"-v1alpha1.yaml"))
+			newConfigYAML, err := MigrateOldConfig(filepath.Join("testdata", tc.name+"-v1beta1.yaml"))
 			if err != nil {
+				if err.Error() == tc.err {
+					return
+				}
 				t.Errorf("error converting old config: %v", err)
 			}
 
@@ -105,13 +98,13 @@ func TestMigrateOldConfig(t *testing.T) {
 			}
 
 			// Validate new config by unmarshaling
-			newConfig := &kubeonev1beta1.KubeOneCluster{}
+			newConfig := &kubeonev1beta2.KubeOneCluster{}
 			err = kyaml.UnmarshalStrict(buffer.Bytes(), &newConfig)
 			if err != nil {
 				t.Errorf("failed to decode new config: %v", err)
 			}
 
-			testhelper.DiffOutput(t, tc.name+"-v1beta1.golden", buffer.String(), *update)
+			testhelper.DiffOutput(t, tc.name+"-v1beta2.golden", buffer.String(), *update)
 		})
 	}
 }

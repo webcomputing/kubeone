@@ -1,4 +1,32 @@
 {{ if eq .Config.CloudProvider.CloudProviderName "azure" }}
+{{ if .Config.CloudProvider.External }}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  annotations:
+    storageclass.beta.kubernetes.io/is-default-class: "true"
+  labels:
+    kubernetes.io/cluster-service: "true"
+  name: azuredisk-csi
+provisioner: disk.csi.azure.com
+parameters:
+  skuName: Standard_LRS
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  labels:
+    kubernetes.io/cluster-service: "true"
+  name: azurefile-csi
+provisioner: file.csi.azure.com
+parameters:
+  skuName: Standard_LRS
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+{{ else }}
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -12,8 +40,23 @@ parameters:
   kind: Managed
   storageaccounttype: Standard_LRS
 {{ end }}
+{{ end }}
 
 {{ if eq .Config.CloudProvider.CloudProviderName "aws" }}
+{{ if .Config.CloudProvider.External }}
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: ebs-csi
+  annotations:
+    storageclass.beta.kubernetes.io/is-default-class: "true"
+  labels:
+    kubernetes.io/cluster-service: "true"
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp2
+volumeBindingMode: WaitForFirstConsumer
+{{ else }}
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -26,6 +69,7 @@ provisioner: kubernetes.io/aws-ebs
 parameters:
   type: gp2
 volumeBindingMode: WaitForFirstConsumer
+{{ end }}
 {{ end }}
 
 {{ if eq .Config.CloudProvider.CloudProviderName "vsphere" }}
@@ -79,7 +123,7 @@ provisioner: kubernetes.io/cinder
 {{ end }}
 {{ end }}
 
-{{ if eq .Config.CloudProvider.CloudProviderName "gcp" }}
+{{ if eq .Config.CloudProvider.CloudProviderName "gce" }}
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -93,6 +137,29 @@ parameters:
   type: pd-ssd
 {{ end }}
 
+{{ if eq .Config.CloudProvider.CloudProviderName "nutanix" }}
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: ntnx-csi
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: csi.nutanix.com
+parameters:
+  storageType: NutanixVolumes
+  csi.storage.k8s.io/provisioner-secret-name: ntnx-secret
+  csi.storage.k8s.io/provisioner-secret-namespace: kube-system
+  csi.storage.k8s.io/node-publish-secret-name: ntnx-secret
+  csi.storage.k8s.io/node-publish-secret-namespace: kube-system
+  csi.storage.k8s.io/controller-expand-secret-name: ntnx-secret
+  csi.storage.k8s.io/controller-expand-secret-namespace: kube-system
+  storageContainer: {{ default "Default" .Params.storageContainer | quote }}
+  csi.storage.k8s.io/fstype: {{ default "xfs" .Params.fsType | quote }}
+  isSegmentedIscsiNetwork: {{ default "false" .Params.isSegmentedIscsiNetwork | quote }}
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+{{ end }}
+
 {{ if eq .Config.CloudProvider.CloudProviderName "hetzner" }}
 kind: StorageClass
 apiVersion: storage.k8s.io/v1
@@ -104,4 +171,26 @@ metadata:
 provisioner: csi.hetzner.cloud
 volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true
+{{ end }}
+
+{{ if eq .Config.CloudProvider.CloudProviderName "digitalocean" }}
+{{ if .Config.CloudProvider.External }}
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: do-block-storage
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: dobs.csi.digitalocean.com
+allowVolumeExpansion: true
+---
+kind: VolumeSnapshotClass
+apiVersion: snapshot.storage.k8s.io/v1beta1
+metadata:
+  name: do-block-storage
+  annotations:
+    snapshot.storage.kubernetes.io/is-default-class: "true"
+driver: dobs.csi.digitalocean.com
+deletionPolicy: Delete
+{{ end }}
 {{ end }}

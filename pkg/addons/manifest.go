@@ -20,8 +20,10 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -41,6 +43,10 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+const (
+	ParamsEnvPrefix = "env:"
+)
+
 func (a *applier) getManifestsFromDirectory(s *state.State, fsys fs.FS, addonName string) (string, error) {
 	overwriteRegistry := ""
 	if s.Cluster.RegistryConfiguration != nil && s.Cluster.RegistryConfiguration.OverwriteRegistry != "" {
@@ -52,6 +58,7 @@ func (a *applier) getManifestsFromDirectory(s *state.State, fsys fs.FS, addonNam
 		for _, addon := range s.Cluster.Addons.Addons {
 			if addon.Name == addonName {
 				addonParams = addon.Params
+
 				break
 			}
 		}
@@ -102,6 +109,7 @@ func (a *applier) loadAddonsManifests(
 			if verbose {
 				logger.Infof("Skipping file %q because it's not .yaml/.yml/.json file\n", file.Name())
 			}
+
 			continue
 		}
 
@@ -128,6 +136,18 @@ func (a *applier) loadAddonsManifests(
 			tplDataParams[k] = v
 		}
 
+		// Resolve environment variables in Params
+		for k, v := range tplDataParams {
+			if strings.HasPrefix(v, ParamsEnvPrefix) {
+				envName := strings.TrimPrefix(v, ParamsEnvPrefix)
+				if env, ok := os.LookupEnv(envName); ok {
+					tplDataParams[k] = env
+				} else {
+					return nil, fmt.Errorf("failed to get environment variable '%s'", envName)
+				}
+			}
+		}
+
 		tplData := a.TemplateData
 		tplData.Params = tplDataParams
 
@@ -145,9 +165,10 @@ func (a *applier) loadAddonsManifests(
 		for {
 			b, err := reader.Read()
 			if err != nil {
-				if err == io.EOF {
+				if errors.Is(err, io.EOF) {
 					break
 				}
+
 				return nil, errors.Wrapf(err, "failed reading from YAML reader for manifest %s", file.Name())
 			}
 
@@ -240,26 +261,43 @@ func txtFuncMap(overwriteRegistry string) template.FuncMap {
 		if overwriteRegistry != "" {
 			return overwriteRegistry
 		}
+
 		return registry
+	}
+
+	funcs["required"] = func(warn string, input interface{}) (interface{}, error) {
+		switch val := input.(type) {
+		case nil:
+			return val, fmt.Errorf(warn)
+		case string:
+			if val == "" {
+				return val, fmt.Errorf(warn)
+			}
+		}
+
+		return input, nil
 	}
 
 	funcs["caBundleEnvVar"] = func() (string, error) {
 		buf, err := yaml.Marshal([]corev1.EnvVar{cabundle.EnvVar()})
+
 		return string(buf), err
 	}
 
 	funcs["caBundleVolume"] = func() (string, error) {
 		buf, err := yaml.Marshal([]corev1.Volume{cabundle.Volume()})
+
 		return string(buf), err
 	}
 
 	funcs["caBundleVolumeMount"] = func() (string, error) {
 		buf, err := yaml.Marshal([]corev1.VolumeMount{cabundle.VolumeMount()})
+
 		return string(buf), err
 	}
 
-	funcs["PacketSecret"] = func(apiKey, projectID string) (string, error) {
-		packetSecret := struct {
+	funcs["EquinixMetalSecret"] = func(apiKey, projectID string) (string, error) {
+		equinixMetalSecret := struct {
 			APIKey    string `json:"apiKey"`
 			ProjectID string `json:"projectID"`
 		}{
@@ -267,7 +305,8 @@ func txtFuncMap(overwriteRegistry string) template.FuncMap {
 			ProjectID: projectID,
 		}
 
-		buf, err := json.Marshal(packetSecret)
+		buf, err := json.Marshal(equinixMetalSecret)
+
 		return string(buf), err
 	}
 

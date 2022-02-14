@@ -24,20 +24,29 @@ import (
 
 // Names of the internal addons
 const (
-	AddonCCMAzure           = "ccm-azure"
-	AddonCCMDigitalOcean    = "ccm-digitalocean"
-	AddonCCMHetzner         = "ccm-hetzner"
-	AddonCCMOpenStack       = "ccm-openstack"
-	AddonCCMPacket          = "ccm-packet"
-	AddonCCMVsphere         = "ccm-vsphere"
-	AddonCSIHetnzer         = "csi-hetzner"
-	AddonCSIOpenStackCinder = "csi-openstack-cinder"
-	AddonCSIVsphere         = "csi-vsphere"
-	AddonCNICanal           = "cni-canal"
-	AddonCNIWeavenet        = "cni-weavenet"
-	AddonMachineController  = "machinecontroller"
-	AddonMetricsServer      = "metrics-server"
-	AddonNodeLocalDNS       = "nodelocaldns"
+	AddonCCMAws                 = "ccm-aws"
+	AddonCCMAzure               = "ccm-azure"
+	AddonCCMDigitalOcean        = "ccm-digitalocean"
+	AddonCCMHetzner             = "ccm-hetzner"
+	AddonCCMOpenStack           = "ccm-openstack"
+	AddonCCMEquinixMetal        = "ccm-equinixmetal"
+	AddonCCMPacket              = "ccm-packet" // TODO: Remove after deprecation period.
+	AddonCCMVsphere             = "ccm-vsphere"
+	AddonCSIAwsEBS              = "csi-aws-ebs"
+	AddonCSIAzureDisk           = "csi-azuredisk"
+	AddonCSIAzureFile           = "csi-azurefile"
+	AddonCSIDigitalOcean        = "csi-digitalocean"
+	AddonCSIHetzner             = "csi-hetzner"
+	AddonCSINutanix             = "csi-nutanix"
+	AddonCSIOpenStackCinder     = "csi-openstack-cinder"
+	AddonCSIVsphere             = "csi-vsphere"
+	AddonCNICanal               = "cni-canal"
+	AddonCNICilium              = "cni-cilium"
+	AddonCNIWeavenet            = "cni-weavenet"
+	AddonMachineController      = "machinecontroller"
+	AddonOperatingSystemManager = "operating-system-manager"
+	AddonMetricsServer          = "metrics-server"
+	AddonNodeLocalDNS           = "nodelocaldns"
 )
 
 const (
@@ -50,11 +59,21 @@ const (
 	MachineControllerNameSpace   = metav1.NamespaceSystem
 	MachineControllerWebhookName = "machine-controller-webhook"
 
+	OperatingSystemManagerName        = "operating-system-manager"
+	OperatingSystemManagerNamespace   = metav1.NamespaceSystem
+	OperatingSystemManagerWebhookName = "operating-system-manager-webhook"
+
 	MetricsServerName      = "metrics-server"
 	MetricsServerNamespace = metav1.NamespaceSystem
 
 	VsphereCSIWebhookName      = "vsphere-webhook-svc"
 	VsphereCSIWebhookNamespace = metav1.NamespaceSystem
+
+	NutanixCSIWebhookName      = "snapshot-validation-service"
+	NutanixCSIWebhookNamespace = metav1.NamespaceSystem
+
+	DigitalOceanCSIWebhookName      = "snapshot-validation-service"
+	DigitalOceanCSIWebhookNamespace = metav1.NamespaceSystem
 )
 
 const (
@@ -69,11 +88,14 @@ const (
 
 func All() map[string]string {
 	return map[string]string{
-		"MachineControllerName":        MachineControllerName,
-		"MachineControllerNameSpace":   MachineControllerNameSpace,
-		"MachineControllerWebhookName": MachineControllerWebhookName,
-		"KubeletImageRepository":       KubeletImageRepository,
-		"NodeLocalDNSVirtualIP":        NodeLocalDNSVirtualIP,
-		"CABundleSSLCertFilePath":      cabundle.SSLCertFilePath,
+		"MachineControllerName":             MachineControllerName,
+		"MachineControllerNameSpace":        MachineControllerNameSpace,
+		"MachineControllerWebhookName":      MachineControllerWebhookName,
+		"OperatingSystemManagerName":        OperatingSystemManagerName,
+		"OperatingSystemManagerNamespace":   OperatingSystemManagerNamespace,
+		"OperatingSystemManagerWebhookName": OperatingSystemManagerWebhookName,
+		"KubeletImageRepository":            KubeletImageRepository,
+		"NodeLocalDNSVirtualIP":             NodeLocalDNSVirtualIP,
+		"CABundleSSLCertFilePath":           cabundle.SSLCertFilePath,
 	}
 }

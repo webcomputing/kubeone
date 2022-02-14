@@ -63,19 +63,66 @@ type KubeOneCluster struct {
 	AssetConfiguration AssetConfiguration `json:"assetConfiguration,omitempty"`
 	// RegistryConfiguration configures how Docker images are pulled from an image registry
 	RegistryConfiguration *RegistryConfiguration `json:"registryConfiguration,omitempty"`
+	// LoggingConfig configures the Kubelet's log rotation
+	LoggingConfig LoggingConfig `json:"loggingConfig,omitempty"`
+}
+
+// LoggingConfig configures the Kubelet's log rotation
+type LoggingConfig struct {
+	// ContainerLogMaxSize configures the maximum size of container log file before it is rotated
+	// See more at: https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/
+	ContainerLogMaxSize string `json:"containerLogMaxSize,omitempty"`
+	// ContainerLogMaxFiles configures the maximum number of container log files that can be present for a container
+	// See more at: https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/
+	ContainerLogMaxFiles int32 `json:"containerLogMaxFiles,omitempty"`
 }
 
 // ContainerRuntimeConfig
 type ContainerRuntimeConfig struct {
-	Docker     *ContainerRuntimeDocker     `json:"docker,omitempty"`
+	// Dockerd related configurations
+	Docker *ContainerRuntimeDocker `json:"docker,omitempty"`
+
+	// Containerd related configurations
 	Containerd *ContainerRuntimeContainerd `json:"containerd,omitempty"`
 }
 
 // ContainerRuntimeDocker defines docker container runtime
-type ContainerRuntimeDocker struct{}
+type ContainerRuntimeDocker struct {
+	// Configures dockerd with "registry-mirrors"
+	RegistryMirrors []string `json:"registryMirrors"`
+}
 
 // ContainerRuntimeContainerd defines docker container runtime
-type ContainerRuntimeContainerd struct{}
+type ContainerRuntimeContainerd struct {
+	// A map of registries to use to render configs and mirrors for containerd registries
+	Registries map[string]ContainerdRegistry `json:"registries,omitempty"`
+}
+
+// ContainerdRegistry defines endpoints and security for given container registry
+type ContainerdRegistry struct {
+	// List of registry mirrors to use
+	Mirrors []string `json:"mirrors,omitempty"`
+
+	// TLSConfig for the registry
+	TLSConfig *ContainerdTLSConfig `json:"tlsConfig,omitempty"`
+
+	// Registry authentication
+	Auth *ContainerdRegistryAuthConfig `json:"auth,omitempty"`
+}
+
+// Containerd per-registry credentials config
+type ContainerdRegistryAuthConfig struct {
+	Username      string `json:"username,omitempty"`
+	Password      string `json:"password,omitempty"`
+	Auth          string `json:"auth,omitempty"`
+	IdentityToken string `json:"identityToken,omitempty"`
+}
+
+// Configures containerd TLS for a registry
+type ContainerdTLSConfig struct {
+	// Don't validate remote TLS certificate
+	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
+}
 
 // OperatingSystemName defines the operating system used on instances
 type OperatingSystemName string
@@ -108,7 +155,7 @@ type HostConfig struct {
 	// Default value is "".
 	SSHPrivateKeyFile string `json:"sshPrivateKeyFile,omitempty"`
 	// SSHAgentSocket path (or reference to the environment) to the SSH agent unix domain socket.
-	// Default vaulue is "env:SSH_AUTH_SOCK".
+	// Default value is "env:SSH_AUTH_SOCK".
 	SSHAgentSocket string `json:"sshAgentSocket,omitempty"`
 	// Bastion is an IP or hostname of the bastion (or jump) host to connect to.
 	// Default value is "".
@@ -129,8 +176,10 @@ type HostConfig struct {
 	// control plane nodes.
 	// Explicitly empty (i.e. []corev1.Taint{}) means no taints will be applied (this is default for worker nodes).
 	Taints []corev1.Taint `json:"taints,omitempty"`
-	// OperatingSystem information populated at the runtime.
-	OperatingSystem OperatingSystemName `json:"-"`
+	// Kubelet
+	Kubelet KubeletConfig `json:"kubelet,omitempty"`
+	// OperatingSystem information, can be populated at the runtime.
+	OperatingSystem OperatingSystemName `json:"operatingSystem,omitempty"`
 }
 
 // ControlPlaneConfig defines control plane nodes
@@ -145,6 +194,19 @@ type StaticWorkersConfig struct {
 	Hosts []HostConfig `json:"hosts,omitempty"`
 }
 
+// KubeletConfig provides some kubelet configuration options
+type KubeletConfig struct {
+	// SystemReserved configure --system-reserved command-line flag of the kubelet.
+	// See more at: https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
+	SystemReserved map[string]string `json:"systemReserved,omitempty"`
+	// KubeReserved configure --kube-reserved command-line flag of the kubelet.
+	// See more at: https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
+	KubeReserved map[string]string `json:"kubeReserved,omitempty"`
+	// EvictionHard configure --eviction-hard command-line flag of the kubelet.
+	// See more at: https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
+	EvictionHard map[string]string `json:"evictionHard,omitempty"`
+}
+
 // APIEndpoint is the endpoint used to communicate with the Kubernetes API
 type APIEndpoint struct {
 	// Host is the hostname or IP on which API is running.
@@ -152,6 +214,8 @@ type APIEndpoint struct {
 	// Port is the port used to reach to the API.
 	// Default value is 6443.
 	Port int `json:"port,omitempty"`
+	// AlternativeNames is a list of Subject Alternative Names for the API Server signing cert.
+	AlternativeNames []string `json:"alternativeNames,omitempty"`
 }
 
 // CloudProviderSpec describes the cloud provider that is running the machines.
@@ -173,10 +237,12 @@ type CloudProviderSpec struct {
 	GCE *GCESpec `json:"gce,omitempty"`
 	// Hetzner
 	Hetzner *HetznerSpec `json:"hetzner,omitempty"`
+	// Nutanix
+	Nutanix *NutanixSpec `json:"nutanix,omitempty"`
 	// Openstack
 	Openstack *OpenstackSpec `json:"openstack,omitempty"`
-	// Packet
-	Packet *PacketSpec `json:"packet,omitempty"`
+	// EquinixMetal
+	EquinixMetal *EquinixMetalSpec `json:"equinixmetal,omitempty"`
 	// Vsphere
 	Vsphere *VsphereSpec `json:"vsphere,omitempty"`
 	// None
@@ -201,11 +267,14 @@ type HetznerSpec struct {
 	NetworkID string `json:"networkID,omitempty"`
 }
 
+// NutanixSpec defines the Nutanix provider
+type NutanixSpec struct{}
+
 // OpenstackSpec defines the Openstack provider
 type OpenstackSpec struct{}
 
-// PacketSpec defines the Packet cloud provider
-type PacketSpec struct{}
+// EquinixMetalSpec defines the Equinix Metal cloud provider
+type EquinixMetalSpec struct{}
 
 // VsphereSpec defines the vSphere provider
 type VsphereSpec struct{}
@@ -241,6 +310,10 @@ type ClusterNetworkConfig struct {
 
 // KubeProxyConfig defines configured kube-proxy mode, default is iptables mode
 type KubeProxyConfig struct {
+	// SkipInstallation will skip the installation of kube-proxy
+	// default value is false
+	SkipInstallation bool `json:"skipInstallation"`
+
 	// IPVS config
 	IPVS *IPVSConfig `json:"ipvs"`
 
@@ -288,6 +361,8 @@ type IPTables struct{}
 type CNI struct {
 	// Canal
 	Canal *CanalSpec `json:"canal,omitempty"`
+	// Cilium
+	Cilium *CiliumSpec `json:"cilium,omitempty"`
 	// WeaveNet
 	WeaveNet *WeaveNetSpec `json:"weaveNet,omitempty"`
 	// External
@@ -299,6 +374,26 @@ type CanalSpec struct {
 	// MTU automatically detected based on the cloudProvider
 	// default value is 1450
 	MTU int `json:"mtu,omitempty"`
+}
+
+type KubeProxyReplacementType string
+
+const (
+	KubeProxyReplacementStrict   KubeProxyReplacementType = "strict"
+	KubeProxyReplacementDisabled KubeProxyReplacementType = "disabled"
+)
+
+// CiliumSpec defines the Cilium CNI plugin
+type CiliumSpec struct {
+	// KubeProxyReplacement defines weather cilium relies on underlying Kernel support
+	// to replace kube-proxy functionality by eBPF (strict), or disables a subset of those
+	// features so cilium does not bail out if the kernel support is missing (disabled).
+	// default is "disabled"
+	KubeProxyReplacement KubeProxyReplacementType `json:"kubeProxyReplacement"`
+
+	// EnableHubble to deploy Hubble relay and UI
+	// default value is false
+	EnableHubble bool `json:"enableHubble"`
 }
 
 // WeaveNetSpec defines the WeaveNet CNI plugin
@@ -335,8 +430,11 @@ type DynamicWorkerConfig struct {
 type ProviderSpec struct {
 	// CloudProviderSpec
 	CloudProviderSpec json.RawMessage `json:"cloudProviderSpec"`
-	// Annotations
+	// Annotations set MachineDeployment.ObjectMeta.Annotations
 	Annotations map[string]string `json:"annotations,omitempty"`
+	// MachineAnnotations set MachineDeployment.Spec.Template.Spec.ObjectMeta.Annotations
+	// a way to annotate resulted Nodes
+	MachineAnnotations map[string]string `json:"machineAnnotations,omitempty"`
 	// Labels
 	Labels map[string]string `json:"labels,omitempty"`
 	// Taints
@@ -382,10 +480,8 @@ type MachineControllerConfig struct {
 type Features struct {
 	// PodNodeSelector
 	PodNodeSelector *PodNodeSelector `json:"podNodeSelector,omitempty"`
-	// PodPresets
-	// Deprecated: will be removed once Kubernetes 1.19 reaches EOL
-	PodPresets *PodPresets `json:"podPresets,omitempty"`
 	// PodSecurityPolicy
+	// Deprecated: will be removed once Kubernetes 1.24 reaches EOL
 	PodSecurityPolicy *PodSecurityPolicy `json:"podSecurityPolicy,omitempty"`
 	// StaticAuditLog
 	StaticAuditLog *StaticAuditLog `json:"staticAuditLog,omitempty"`
@@ -408,7 +504,9 @@ type SystemPackages struct {
 
 // AssetConfiguration controls how assets (e.g. CNI, Kubelet, kube-apiserver, and more)
 // are pulled.
-// The AssetConfiguration API is an alpha API currently working only on Amazon Linux 2.
+// The AssetConfiguration API is a deprecated API removed in the v1beta2 API.
+// The AssetConfiguration API will be completely removed in KubeOne 1.6+
+// Currently, configuring BinaryAssets works only on Amazon Linux 2.
 type AssetConfiguration struct {
 	// Kubernetes configures the image registry and repository for the core Kubernetes
 	// images (kube-apiserver, kube-controller-manager, kube-scheduler, and kube-proxy).
@@ -507,16 +605,9 @@ type PodNodeSelectorConfig struct {
 	ConfigFilePath string `json:"configFilePath"`
 }
 
-// PodPresets feature flag
-// The PodPresets feature has been removed in Kubernetes 1.20.
-// This feature is deprecated and will be removed from the API once
-// Kubernetes 1.19 reaches EOL.
-type PodPresets struct {
-	// Enable
-	Enable bool `json:"enable,omitempty"`
-}
-
 // PodSecurityPolicy feature flag
+// This feature is deprecated and will be removed from the API once
+// Kubernetes 1.24 reaches EOL.
 type PodSecurityPolicy struct {
 	// Enable
 	Enable bool `json:"enable,omitempty"`

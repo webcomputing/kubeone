@@ -11,9 +11,11 @@ source /etc/kubeone/proxy-env
 cat <<EOF | sudo tee /etc/modules-load.d/containerd.conf
 overlay
 br_netfilter
+ip_tables
 EOF
 sudo modprobe overlay
 sudo modprobe br_netfilter
+sudo modprobe ip_tables
 sudo mkdir -p /etc/sysctl.d
 cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
 fs.inotify.max_user_watches         = 1048576
@@ -72,11 +74,14 @@ curl -fsSL https://download.docker.com/linux/ubuntu/gpg |
 sudo add-apt-repository "deb https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
 
 
-
-
+sudo apt-mark unhold containerd.io || true
 sudo apt-get install -y containerd.io=1.4.*
 sudo apt-mark hold containerd.io
 
+
+sudo mkdir -p $(dirname /etc/containerd/config.toml)
+sudo touch /etc/containerd/config.toml
+sudo chmod 600 /etc/containerd/config.toml
 cat <<EOF | sudo tee /etc/containerd/config.toml
 version = 2
 
@@ -95,21 +100,14 @@ SystemdCgroup = true
 [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
 [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
 endpoint = ["https://registry-1.docker.io"]
-EOF
 
+EOF
 cat <<EOF | sudo tee /etc/crictl.yaml
 runtime-endpoint: unix:///run/containerd/containerd.sock
 EOF
 
-sudo mkdir -p /etc/systemd/system/containerd.service.d
-cat <<EOF | sudo tee /etc/systemd/system/containerd.service.d/environment.conf
-[Service]
-Restart=always
-EnvironmentFile=-/etc/environment
-EOF
-
 sudo systemctl daemon-reload
-sudo systemctl enable --now containerd
+sudo systemctl enable containerd
 sudo systemctl restart containerd
 
 

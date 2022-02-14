@@ -36,7 +36,7 @@ const (
 	DefaultNodePortRange = "30000-32767"
 	// DefaultStaticNoProxy defined static NoProxy
 	DefaultStaticNoProxy = "127.0.0.1/8,localhost"
-	// DefaultVXLanMTU defines default VXLAN MTU for Canal CNI
+	// DefaultCanalMTU defines default VXLAN MTU for Canal CNI
 	DefaultCanalMTU = 1450
 )
 
@@ -53,7 +53,6 @@ func SetDefaults_KubeOneCluster(obj *KubeOneCluster) {
 	SetDefaults_Proxy(obj)
 	SetDefaults_MachineController(obj)
 	SetDefaults_SystemPackages(obj)
-	SetDefaults_AssetConfiguration(obj)
 	SetDefaults_Features(obj)
 	SetDefaults_Addons(obj)
 }
@@ -162,6 +161,10 @@ func SetDefaults_ClusterNetwork(obj *KubeOneCluster) {
 	if obj.ClusterNetwork.CNI.Canal != nil && obj.ClusterNetwork.CNI.Canal.MTU == 0 {
 		obj.ClusterNetwork.CNI.Canal.MTU = defaultCanal.MTU
 	}
+
+	if obj.ClusterNetwork.CNI.Cilium != nil && obj.ClusterNetwork.CNI.Cilium.KubeProxyReplacement == "" {
+		obj.ClusterNetwork.CNI.Cilium.KubeProxyReplacement = "disabled"
+	}
 }
 
 func SetDefaults_Proxy(obj *KubeOneCluster) {
@@ -195,31 +198,6 @@ func SetDefaults_SystemPackages(obj *KubeOneCluster) {
 			ConfigureRepositories: true,
 		}
 	}
-}
-
-func SetDefaults_AssetConfiguration(obj *KubeOneCluster) {
-	if obj.RegistryConfiguration == nil || obj.RegistryConfiguration.OverwriteRegistry == "" {
-		// We default AssetConfiguration only if RegistryConfiguration.OverwriteRegistry
-		// is used
-		return
-	}
-
-	obj.AssetConfiguration.Kubernetes.ImageRepository = defaults(
-		obj.AssetConfiguration.Kubernetes.ImageRepository,
-		obj.RegistryConfiguration.OverwriteRegistry,
-	)
-	obj.AssetConfiguration.CoreDNS.ImageRepository = defaults(
-		obj.AssetConfiguration.CoreDNS.ImageRepository,
-		obj.RegistryConfiguration.OverwriteRegistry,
-	)
-	obj.AssetConfiguration.Etcd.ImageRepository = defaults(
-		obj.AssetConfiguration.Etcd.ImageRepository,
-		obj.RegistryConfiguration.OverwriteRegistry,
-	)
-	obj.AssetConfiguration.MetricsServer.ImageRepository = defaults(
-		obj.AssetConfiguration.MetricsServer.ImageRepository,
-		obj.RegistryConfiguration.OverwriteRegistry,
-	)
 }
 
 func SetDefaults_Features(obj *KubeOneCluster) {
@@ -278,6 +256,7 @@ func defaults(input, defaultValue string) string {
 	if input != "" {
 		return input
 	}
+
 	return defaultValue
 }
 
@@ -285,5 +264,6 @@ func defaulti(input, defaultValue int) int {
 	if input != 0 {
 		return input
 	}
+
 	return defaultValue
 }

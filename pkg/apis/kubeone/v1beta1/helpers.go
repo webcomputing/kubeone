@@ -36,7 +36,7 @@ func SetCloudProvider(cp *CloudProviderSpec, name string) error {
 		cp.Hetzner = &HetznerSpec{}
 	case "openstack":
 		cp.Openstack = &OpenstackSpec{}
-	case "packet":
+	case "packet", "equinixmetal":
 		cp.Packet = &PacketSpec{}
 	case "vsphere":
 		cp.Vsphere = &VsphereSpec{}
@@ -45,5 +45,6 @@ func SetCloudProvider(cp *CloudProviderSpec, name string) error {
 	default:
 		return errors.Errorf("provider %q is not supported", name)
 	}
+
 	return nil
 }

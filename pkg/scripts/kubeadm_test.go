@@ -17,6 +17,7 @@ limitations under the License.
 package scripts
 
 import (
+	"errors"
 	"testing"
 
 	"k8c.io/kubeone/pkg/testhelper"
@@ -55,9 +56,11 @@ func TestKubeadmJoin(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := KubeadmJoin(tt.args.workdir, tt.args.nodeID, tt.args.verboseFlag)
-			if err != tt.err {
+			if !errors.Is(err, tt.err) {
 				t.Errorf("KubeadmJoin() error = %v, wantErr %v", err, tt.err)
+
 				return
 			}
 
@@ -99,9 +102,11 @@ func TestKubeadmJoinWorker(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := KubeadmJoinWorker(tt.args.workdir, tt.args.nodeID, tt.args.verboseFlag)
-			if err != tt.err {
+			if !errors.Is(err, tt.err) {
 				t.Errorf("KubeadmJoinWorker() error = %v, wantErr %v", err, tt.err)
+
 				return
 			}
 
@@ -143,9 +148,11 @@ func TestKubeadmCert(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := KubeadmCert(tt.args.workdir, tt.args.nodeID, tt.args.verboseFlag)
-			if err != tt.err {
+			if !errors.Is(err, tt.err) {
 				t.Errorf("KubeadmCert() error = %v, wantErr %v", err, tt.err)
+
 				return
 			}
 
@@ -193,9 +200,11 @@ func TestKubeadmInit(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := KubeadmInit(tt.args.workdir, tt.args.nodeID, tt.args.verboseFlag, tt.args.token, tt.args.tokenTTL)
-			if err != tt.err {
+			t.Parallel()
+			got, err := KubeadmInit(tt.args.workdir, tt.args.nodeID, tt.args.verboseFlag, tt.args.token, tt.args.tokenTTL, "")
+			if !errors.Is(err, tt.err) {
 				t.Errorf("KubeadmInit() error = %v, wantErr %v", err, tt.err)
+
 				return
 			}
 
@@ -234,9 +243,11 @@ func TestKubeadmReset(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := KubeadmReset(tt.args.verboseFlag, tt.args.workdir)
-			if err != tt.err {
+			if !errors.Is(err, tt.err) {
 				t.Errorf("KubeadmReset() error = %v, wantErr %v", err, tt.err)
+
 				return
 			}
 
@@ -245,12 +256,13 @@ func TestKubeadmReset(t *testing.T) {
 	}
 }
 
-func TestKubeadmUpgradeLeader(t *testing.T) {
+func TestKubeadmUpgrade(t *testing.T) {
 	t.Parallel()
 
 	type args struct {
 		kubeadmCmd string
 		workdir    string
+		leader     bool
 	}
 	tests := []struct {
 		name string
@@ -261,7 +273,15 @@ func TestKubeadmUpgradeLeader(t *testing.T) {
 			name: "v1beta2",
 			args: args{
 				workdir:    "test-wd",
-				kubeadmCmd: "kubeadm upgrade node --certificate-renewal=true",
+				kubeadmCmd: "kubeadm upgrade node",
+			},
+		},
+		{
+			name: "leader",
+			args: args{
+				workdir:    "some",
+				kubeadmCmd: "kubeadm upgrade apply -y --certificate-renewal=true v1.1.1",
+				leader:     true,
 			},
 		},
 	}
@@ -269,9 +289,11 @@ func TestKubeadmUpgradeLeader(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := KubeadmUpgradeLeader(tt.args.kubeadmCmd, tt.args.workdir)
-			if err != tt.err {
+			t.Parallel()
+			got, err := KubeadmUpgrade(tt.args.kubeadmCmd, tt.args.workdir, tt.args.leader, 0)
+			if !errors.Is(err, tt.err) {
 				t.Errorf("KubeadmUpgradeLeader() error = %v, wantErr %v", err, tt.err)
+
 				return
 			}
 

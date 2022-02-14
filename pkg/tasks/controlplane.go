@@ -25,8 +25,11 @@ import (
 	"k8c.io/kubeone/pkg/state"
 )
 
+const kubeadmPhaseKubeProxy = "addon/kube-proxy"
+
 func joinControlplaneNode(s *state.State) error {
 	s.Logger.Infoln("Joining controlplane node...")
+
 	return s.RunTaskOnFollowers(joinControlPlaneNodeInternal, state.RunSequentially)
 }
 
@@ -44,7 +47,11 @@ func joinControlPlaneNodeInternal(s *state.State, node *kubeoneapi.HostConfig, c
 	}
 
 	_, _, err = s.Runner.RunRaw(cmd)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return approvePendingCSR(s, node, conn)
 }
 
 func kubeadmCertsExecutor(s *state.State, node *kubeoneapi.HostConfig, conn ssh.Connection) error {
@@ -61,10 +68,16 @@ func kubeadmCertsExecutor(s *state.State, node *kubeoneapi.HostConfig, conn ssh.
 
 func initKubernetesLeader(s *state.State) error {
 	s.Logger.Infoln("Initializing Kubernetes on leader...")
+
 	return s.RunTaskOnLeader(func(s *state.State, node *kubeoneapi.HostConfig, conn ssh.Connection) error {
+		var skipPhase string
+		if s.Cluster.ClusterNetwork.KubeProxy != nil && s.Cluster.ClusterNetwork.KubeProxy.SkipInstallation {
+			skipPhase = kubeadmPhaseKubeProxy
+		}
+
 		s.Logger.Infoln("Running kubeadm...")
 
-		cmd, err := scripts.KubeadmInit(s.WorkDir, node.ID, s.KubeadmVerboseFlag(), s.JoinToken, time.Hour.String())
+		cmd, err := scripts.KubeadmInit(s.WorkDir, node.ID, s.KubeadmVerboseFlag(), s.JoinToken, time.Hour.String(), skipPhase)
 		if err != nil {
 			return err
 		}

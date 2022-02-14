@@ -45,6 +45,32 @@ resource "azurerm_availability_set" "avset" {
   }
 }
 
+resource "azurerm_availability_set" "avset_workers" {
+  name                         = "${var.cluster_name}-avset-workers"
+  location                     = var.location
+  resource_group_name          = azurerm_resource_group.rg.name
+  platform_fault_domain_count  = 2
+  platform_update_domain_count = 2
+  managed                      = true
+
+  tags = {
+    environment = "kubeone"
+    cluster     = var.cluster_name
+  }
+}
+
+resource "azurerm_route_table" "rt" {
+  name                          = "${var.cluster_name}-rt"
+  location                      = azurerm_resource_group.rg.location
+  resource_group_name           = azurerm_resource_group.rg.name
+  disable_bgp_route_propagation = false
+
+  tags = {
+    environment = "kubeone"
+    cluster     = var.cluster_name
+  }
+}
+
 resource "azurerm_virtual_network" "vpc" {
   name                = "${var.cluster_name}-vpc"
   address_space       = ["172.16.0.0/12"]
@@ -94,7 +120,6 @@ resource "azurerm_network_security_group" "sg" {
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
-
   tags = {
     environment = "kubeone"
     cluster     = var.cluster_name

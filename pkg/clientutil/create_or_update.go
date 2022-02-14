@@ -40,7 +40,7 @@ func CreateOrUpdate(ctx context.Context, c client.Client, obj client.Object, upd
 		update(c, obj)
 	}
 
-	existing := obj.DeepCopyObject().(client.Object)
+	existing, _ := obj.DeepCopyObject().(client.Object)
 	key := client.ObjectKey{
 		Name:      existing.GetName(),
 		Namespace: existing.GetNamespace(),
@@ -60,4 +60,42 @@ func CreateOrUpdate(ctx context.Context, c client.Client, obj client.Object, upd
 	}
 
 	return errors.Wrapf(c.Update(ctx, obj), "failed to update %T object", obj)
+}
+
+// CreateOrReplace makes it easy to "replace" objects
+func CreateOrReplace(ctx context.Context, c client.Client, obj client.Object, updaters ...Updater) error {
+	for _, update := range updaters {
+		update(c, obj)
+	}
+
+	err := c.Create(ctx, obj)
+	if err == nil {
+		return nil // success!
+	}
+
+	// Object does not exist already, but creating failed for another reason
+	if !k8serrors.IsAlreadyExists(err) {
+		return errors.Wrap(err, "failed to create object")
+	}
+
+	// Object exists already, time to update it
+	existingObj, _ := obj.DeepCopyObject().(client.Object)
+	key := client.ObjectKey{
+		Name:      obj.GetName(),
+		Namespace: obj.GetNamespace(),
+	}
+
+	if err = c.Get(ctx, key, existingObj); err != nil {
+		return errors.Wrap(err, "failed to retrieve existing object")
+	}
+
+	// do not use mergo to merge the existing into the new object,
+	// because this would bring back the "kubectl apply" semantics;
+	// we want "kubectl replace" semantics instead, so we only keep
+	// a few fields from the metadata intact and overwrite everything else
+
+	obj.SetResourceVersion(existingObj.GetResourceVersion())
+	obj.SetGeneration(existingObj.GetGeneration())
+
+	return errors.Wrap(c.Update(ctx, obj), "failed to update object")
 }

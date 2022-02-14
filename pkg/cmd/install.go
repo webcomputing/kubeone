@@ -26,16 +26,16 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"k8c.io/kubeone/pkg/credentials"
 	"k8c.io/kubeone/pkg/state"
 	"k8c.io/kubeone/pkg/tasks"
 )
 
 type installOpts struct {
 	globalOptions
-	BackupFile string `longflag:"backup" shortflag:"b"`
-	NoInit     bool   `longflag:"no-init"`
-	Force      bool   `longflag:"force"`
+	BackupFile               string `longflag:"backup" shortflag:"b"`
+	NoInit                   bool   `longflag:"no-init"`
+	Force                    bool   `longflag:"force"`
+	CreateMachineDeployments bool   `longflag:"create-machine-deployments"`
 }
 
 func (opts *installOpts) BuildState() (*state.State, error) {
@@ -46,6 +46,8 @@ func (opts *installOpts) BuildState() (*state.State, error) {
 
 	s.ForceInstall = opts.Force
 	s.BackupFile = opts.BackupFile
+	s.CreateMachineDeployments = opts.CreateMachineDeployments
+
 	if s.BackupFile == "" {
 		fullPath, _ := filepath.Abs(opts.ManifestFile)
 		clusterName := s.Cluster.Name
@@ -92,6 +94,7 @@ func installCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 			}
 
 			opts.globalOptions = *gopts
+
 			return runInstall(opts)
 		},
 	}
@@ -110,6 +113,12 @@ func installCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 		"don't initialize the cluster (only install binaries)")
 
 	cmd.Flags().BoolVar(
+		&opts.CreateMachineDeployments,
+		longFlagName(opts, "CreateMachineDeployments"),
+		true,
+		"create MachineDeployments objects")
+
+	cmd.Flags().BoolVar(
 		&opts.Force,
 		longFlagName(opts, "Force"),
 		false,
@@ -125,10 +134,11 @@ func runInstall(opts *installOpts) error {
 		return errors.Wrap(err, "failed to initialize State")
 	}
 
+	s.Logger.Warn("The \"kubeone install\" command is deprecated and will be removed in KubeOne 1.6. Please use \"kubeone apply\" instead.")
+
 	// Validate credentials
-	_, err = credentials.ProviderCredentials(s.Cluster.CloudProvider, opts.CredentialsFile)
-	if err != nil {
-		return errors.Wrap(err, "failed to validate credentials")
+	if vErr := validateCredentials(s, opts.CredentialsFile); vErr != nil {
+		return vErr
 	}
 
 	if opts.NoInit {

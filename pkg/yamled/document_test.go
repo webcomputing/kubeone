@@ -17,7 +17,7 @@ limitations under the License.
 package yamled
 
 import (
-	"io/ioutil"
+	"os"
 	"strings"
 	"testing"
 
@@ -26,11 +26,12 @@ import (
 )
 
 func getTestcaseYAML(t *testing.T, filename string) string {
+	t.Helper()
 	if filename == "" {
 		filename = "document.yaml"
 	}
 
-	content, err := ioutil.ReadFile("testcases/" + filename)
+	content, err := os.ReadFile("testcases/" + filename)
 	if err != nil {
 		t.Fatalf("could not load document %s: %v", filename, err)
 	}
@@ -39,6 +40,7 @@ func getTestcaseYAML(t *testing.T, filename string) string {
 }
 
 func loadTestcase(t *testing.T, name string) (*Document, string) {
+	t.Helper()
 	content := getTestcaseYAML(t, name)
 	parts := strings.Split(content, "###")
 
@@ -56,6 +58,7 @@ func loadTestcase(t *testing.T, name string) (*Document, string) {
 }
 
 func assertEqualYAML(t *testing.T, actual *Document, expected string) {
+	t.Helper()
 	out, _ := yaml.Marshal(actual)
 
 	diff := difflib.UnifiedDiff{

@@ -19,6 +19,7 @@ output "kubeone_api" {
 
   value = {
     endpoint = google_compute_address.lb_ip.address
+    apiserver_alternative_names = var.apiserver_alternative_names
   }
 }
 
@@ -63,7 +64,7 @@ output "kubeone_workers" {
           machineType           = var.workers_type
           network               = google_compute_network.network.self_link
           subnetwork            = google_compute_subnetwork.subnet.self_link
-          zone                  = "${var.region}-a"
+          zone                  = "${local.zone_first}"
           preemptible           = false
           assignPublicIPAddress = true
           # Enable support for multizone clusters

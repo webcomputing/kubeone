@@ -108,7 +108,7 @@ type HostConfig struct {
 	// Default value is "".
 	SSHPrivateKeyFile string `json:"sshPrivateKeyFile,omitempty"`
 	// SSHAgentSocket path (or reference to the environment) to the SSH agent unix domain socket.
-	// Default vaulue is "env:SSH_AUTH_SOCK".
+	// Default value is "env:SSH_AUTH_SOCK".
 	SSHAgentSocket string `json:"sshAgentSocket,omitempty"`
 	// Bastion is an IP or hostname of the bastion (or jump) host to connect to.
 	// Default value is "".
@@ -152,6 +152,8 @@ type APIEndpoint struct {
 	// Port is the port used to reach to the API.
 	// Default value is 6443.
 	Port int `json:"port,omitempty"`
+	// AlternativeNames is a list of Subject Alternative Names for the API Server signing cert.
+	AlternativeNames []string `json:"alternativeNames,omitempty"`
 }
 
 // CloudProviderSpec describes the cloud provider that is running the machines.
@@ -241,6 +243,10 @@ type ClusterNetworkConfig struct {
 
 // KubeProxyConfig defines configured kube-proxy mode, default is iptables mode
 type KubeProxyConfig struct {
+	// SkipInstallation will skip the installation of kube-proxy
+	// default value is false
+	SkipInstallation bool `json:"skipInstallation"`
+
 	// IPVS config
 	IPVS *IPVSConfig `json:"ipvs"`
 
@@ -288,6 +294,8 @@ type IPTables struct{}
 type CNI struct {
 	// Canal
 	Canal *CanalSpec `json:"canal,omitempty"`
+	// Cilium
+	Cilium *CiliumSpec `json:"cilium,omitempty"`
 	// WeaveNet
 	WeaveNet *WeaveNetSpec `json:"weaveNet,omitempty"`
 	// External
@@ -299,6 +307,26 @@ type CanalSpec struct {
 	// MTU automatically detected based on the cloudProvider
 	// default value is 1450
 	MTU int `json:"mtu,omitempty"`
+}
+
+type KubeProxyReplacementType string
+
+const (
+	KubeProxyReplacementStrict   KubeProxyReplacementType = "strict"
+	KubeProxyReplacementDisabled KubeProxyReplacementType = "disabled"
+)
+
+// CiliumSpec defines the Cilium CNI plugin
+type CiliumSpec struct {
+	// KubeProxyReplacement defines weather cilium relies on underlying Kernel support
+	// to replace kube-proxy functionality by eBPF (strict), or disables a subset of those
+	// features so cilium does not bail out if the kernel support is missing (disabled).
+	// default is "disabled"
+	KubeProxyReplacement KubeProxyReplacementType `json:"kubeProxyReplacement"`
+
+	// EnableHubble to deploy Hubble relay and UI
+	// default value is false
+	EnableHubble bool `json:"enableHubble"`
 }
 
 // WeaveNetSpec defines the WeaveNet CNI plugin
@@ -335,8 +363,11 @@ type DynamicWorkerConfig struct {
 type ProviderSpec struct {
 	// CloudProviderSpec
 	CloudProviderSpec json.RawMessage `json:"cloudProviderSpec"`
-	// Annotations
+	// Annotations set MachineDeployment.ObjectMeta.Annotations
 	Annotations map[string]string `json:"annotations,omitempty"`
+	// MachineAnnotations set MachineDeployment.Spec.Template.Spec.ObjectMeta.Annotations
+	// a way to annotate resulted Nodes
+	MachineAnnotations map[string]string `json:"machineAnnotations,omitempty"`
 	// Labels
 	Labels map[string]string `json:"labels,omitempty"`
 	// Taints
@@ -383,9 +414,10 @@ type Features struct {
 	// PodNodeSelector
 	PodNodeSelector *PodNodeSelector `json:"podNodeSelector,omitempty"`
 	// PodPresets
-	// Deprecated: will be removed once Kubernetes 1.19 reaches EOL
+	// Obsolete: this feature has been removed from KubeOne and specifying it will have no effect
 	PodPresets *PodPresets `json:"podPresets,omitempty"`
 	// PodSecurityPolicy
+	// Deprecated: will be removed once Kubernetes 1.24 reaches EOL
 	PodSecurityPolicy *PodSecurityPolicy `json:"podSecurityPolicy,omitempty"`
 	// StaticAuditLog
 	StaticAuditLog *StaticAuditLog `json:"staticAuditLog,omitempty"`
@@ -399,6 +431,13 @@ type Features struct {
 	EncryptionProviders *EncryptionProviders `json:"encryptionProviders,omitempty"`
 }
 
+// PodPresets feature flag
+// The PodPresets feature is obsolete and has been removed
+type PodPresets struct {
+	// Enable
+	Enable bool `json:"enable,omitempty"`
+}
+
 // SystemPackages controls configurations of APT/YUM
 type SystemPackages struct {
 	// ConfigureRepositories (true by default) is a flag to control automatic
@@ -408,7 +447,9 @@ type SystemPackages struct {
 
 // AssetConfiguration controls how assets (e.g. CNI, Kubelet, kube-apiserver, and more)
 // are pulled.
-// The AssetConfiguration API is an alpha API currently working only on Amazon Linux 2.
+// The AssetConfiguration API is a deprecated API removed in the v1beta2 API.
+// The AssetConfiguration API will be completely removed in KubeOne 1.6+
+// Currently, configuring BinaryAssets works only on Amazon Linux 2.
 type AssetConfiguration struct {
 	// Kubernetes configures the image registry and repository for the core Kubernetes
 	// images (kube-apiserver, kube-controller-manager, kube-scheduler, and kube-proxy).
@@ -507,16 +548,9 @@ type PodNodeSelectorConfig struct {
 	ConfigFilePath string `json:"configFilePath"`
 }
 
-// PodPresets feature flag
-// The PodPresets feature has been removed in Kubernetes 1.20.
-// This feature is deprecated and will be removed from the API once
-// Kubernetes 1.19 reaches EOL.
-type PodPresets struct {
-	// Enable
-	Enable bool `json:"enable,omitempty"`
-}
-
 // PodSecurityPolicy feature flag
+// This feature is deprecated and will be removed from the API once
+// Kubernetes 1.24 reaches EOL.
 type PodSecurityPolicy struct {
 	// Enable
 	Enable bool `json:"enable,omitempty"`

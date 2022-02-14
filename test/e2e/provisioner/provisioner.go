@@ -32,8 +32,8 @@ const (
 	Hetzner = "hetzner"
 	// GCE cloud provider
 	GCE = "gce"
-	// Packet cloud provider
-	Packet = "packet"
+	// Equinix Metal cloud provider
+	EquinixMetal = "equinixmetal"
 	// OpenStack provider
 	OpenStack = "openstack"
 
@@ -52,22 +52,28 @@ func CreateProvisioner(testPath string, identifier string, provider string) (Pro
 	switch provider {
 	case AWS:
 		creds := verifyCredentials("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+
 		return NewDefaultProvisioner(creds, testPath, identifier, provider)
 	case DigitalOcean:
 		creds := verifyCredentials("DIGITALOCEAN_TOKEN")
+
 		return NewDefaultProvisioner(creds, testPath, identifier, provider)
 	case Hetzner:
 		creds := verifyCredentials("HCLOUD_TOKEN")
+
 		return NewDefaultProvisioner(creds, testPath, identifier, provider)
 	case GCE:
 		creds := verifyCredentials("GOOGLE_CREDENTIALS")
+
 		return NewDefaultProvisioner(creds, testPath, identifier, provider)
-	case Packet:
-		creds := verifyCredentials("PACKET_AUTH_TOKEN", "PACKET_PROJECT_ID")
+	case EquinixMetal:
+		creds := verifyCredentials("METAL_AUTH_TOKEN", "METAL_PROJECT_ID")
+
 		return NewDefaultProvisioner(creds, testPath, identifier, provider)
 	case OpenStack:
 		creds := verifyCredentials("OS_AUTH_URL", "OS_DOMAIN_NAME", "OS_PASSWORD",
 			"OS_REGION_NAME", "OS_TENANT_NAME", "OS_USERNAME")
+
 		return NewDefaultProvisioner(creds, testPath, identifier, provider)
 	default:
 		return nil, fmt.Errorf("unsupported provider %v", provider)

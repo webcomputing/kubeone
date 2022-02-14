@@ -44,7 +44,7 @@ var (
 			exit 0;
 		fi
 
-		sudo kubeadm {{ .VERBOSE }} init --config={{ .WORK_DIR }}/cfg/master_{{ .NODE_ID }}.yaml
+		sudo kubeadm {{ .VERBOSE }} init {{ if .SKIP_PHASE }}--skip-phases={{ .SKIP_PHASE }} {{ end}}--config={{ .WORK_DIR }}/cfg/master_{{ .NODE_ID }}.yaml
 	`)
 
 	kubeadmResetScriptTemplate = heredoc.Doc(`
@@ -57,8 +57,8 @@ var (
 		sudo rm -rf /etc/kubeone
 	`)
 
-	kubeadmUpgradeLeaderScriptTemplate = heredoc.Doc(`
-		sudo {{ .KUBEADM_UPGRADE }} --config={{ .WORK_DIR }}/cfg/master_0.yaml
+	kubeadmUpgradeScriptTemplate = heredoc.Doc(`
+		sudo {{ .KUBEADM_UPGRADE }}{{ if .LEADER }} --config={{ .WORK_DIR }}/cfg/master_{{ .NODE_ID }}.yaml{{ end }}
 	`)
 
 	kubeadmPauseImageVersionScriptTemplate = heredoc.Doc(`
@@ -92,13 +92,14 @@ func KubeadmCert(workdir string, nodeID int, verboseFlag string) (string, error)
 	})
 }
 
-func KubeadmInit(workdir string, nodeID int, verboseFlag, token, tokenTTL string) (string, error) {
+func KubeadmInit(workdir string, nodeID int, verboseFlag, token, tokenTTL string, skipPhases string) (string, error) {
 	return Render(kubeadmInitScriptTemplate, Data{
 		"WORK_DIR":       workdir,
 		"NODE_ID":        nodeID,
 		"VERBOSE":        verboseFlag,
 		"TOKEN":          token,
 		"TOKEN_DURATION": tokenTTL,
+		"SKIP_PHASE":     skipPhases,
 	})
 }
 
@@ -109,10 +110,12 @@ func KubeadmReset(verboseFlag, workdir string) (string, error) {
 	})
 }
 
-func KubeadmUpgradeLeader(kubeadmCmd, workdir string) (string, error) {
-	return Render(kubeadmUpgradeLeaderScriptTemplate, map[string]interface{}{
+func KubeadmUpgrade(kubeadmCmd, workdir string, leader bool, nodeID int) (string, error) {
+	return Render(kubeadmUpgradeScriptTemplate, map[string]interface{}{
 		"KUBEADM_UPGRADE": kubeadmCmd,
 		"WORK_DIR":        workdir,
+		"NODE_ID":         nodeID,
+		"LEADER":          leader,
 	})
 }
 

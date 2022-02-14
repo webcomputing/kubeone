@@ -42,10 +42,6 @@ func Activate(s *state.State) error {
 		return errors.Wrap(err, "failed to install PodSecurityPolicy")
 	}
 
-	if err := installMetricsServer(s.Cluster.Features.MetricsServer.Enable, s); err != nil {
-		return errors.Wrap(err, "failed to install metrics-server")
-	}
-
 	if err := installPodNodeSelector(s.Context, s.DynamicClient, s.Cluster.Features.PodNodeSelector); err != nil {
 		return errors.Wrap(err, "failed to install podNodeSelector")
 	}
@@ -60,7 +56,6 @@ func UpdateKubeadmClusterConfiguration(featuresCfg kubeoneapi.Features, args *ku
 	activateKubeadmStaticAuditLogs(featuresCfg.StaticAuditLog, args)
 	activateKubeadmDynamicAuditLogs(featuresCfg.DynamicAuditLog, args)
 	activateKubeadmOIDC(featuresCfg.OpenIDConnect, args)
-	activateKubeadmPodPresets(featuresCfg.PodPresets, args)
 	activateKubeadmPodNodeSelector(featuresCfg.PodNodeSelector, args)
 	activateEncryptionProviders(featuresCfg.EncryptionProviders, args)
 }

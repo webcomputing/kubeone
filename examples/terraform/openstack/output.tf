@@ -19,6 +19,7 @@ output "kubeone_api" {
 
   value = {
     endpoint = openstack_networking_floatingip_v2.lb.address
+    apiserver_alternative_names = var.apiserver_alternative_names
   }
 }
 

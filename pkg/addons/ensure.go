@@ -17,43 +17,128 @@ limitations under the License.
 package addons
 
 import (
-	"fmt"
 	"io/fs"
-	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/pkg/errors"
 
-	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
-	"k8c.io/kubeone/pkg/ssh"
+	"k8c.io/kubeone/pkg/semverutil"
 	"k8c.io/kubeone/pkg/state"
 	"k8c.io/kubeone/pkg/templates/resources"
+	"k8c.io/kubeone/pkg/templates/weave"
 )
 
 const (
 	// addonLabel is applied to all objects deployed using addons
 	addonLabel = "kubeone.io/addon"
+
+	// greaterThan23Constraint defines a semver constraint that validates Kubernetes versions is greater than 1.23
+	greaterThan23Constraint = ">= 1.23"
 )
 
 var (
 	// embeddedAddons is a list of addons that are embedded in the KubeOne
 	// binary. Those addons are skipped when applying a user-provided addon with the same name.
 	embeddedAddons = map[string]string{
+		resources.AddonCCMAws:             "",
 		resources.AddonCCMAzure:           "",
 		resources.AddonCCMDigitalOcean:    "",
 		resources.AddonCCMHetzner:         "",
 		resources.AddonCCMOpenStack:       "",
+		resources.AddonCCMEquinixMetal:    "",
 		resources.AddonCCMPacket:          "",
 		resources.AddonCCMVsphere:         "",
 		resources.AddonCNICanal:           "",
+		resources.AddonCNICilium:          "",
 		resources.AddonCNIWeavenet:        "",
-		resources.AddonCSIHetnzer:         "",
+		resources.AddonCSIAwsEBS:          "",
+		resources.AddonCSIAzureDisk:       "",
+		resources.AddonCSIAzureFile:       "",
+		resources.AddonCSIDigitalOcean:    "",
+		resources.AddonCSIHetzner:         "",
+		resources.AddonCSINutanix:         "",
 		resources.AddonCSIOpenStackCinder: "",
 		resources.AddonCSIVsphere:         "",
 		resources.AddonMachineController:  "",
 		resources.AddonMetricsServer:      "",
 		resources.AddonNodeLocalDNS:       "",
 	}
+
+	greaterThan23 = semverutil.MustParseConstraint(greaterThan23Constraint)
 )
+
+type addonAction struct {
+	name      string
+	supportFn func() error
+}
+
+//nolint:nakedret
+func collectAddons(s *state.State) (addonsToDeploy []addonAction) {
+	if s.Cluster.Features.MetricsServer.Enable {
+		addonsToDeploy = append(addonsToDeploy, addonAction{
+			name: resources.AddonMetricsServer,
+		})
+	}
+
+	switch {
+	case s.Cluster.ClusterNetwork.CNI.Canal != nil:
+		addonsToDeploy = append(addonsToDeploy, addonAction{
+			name: resources.AddonCNICanal,
+		})
+	case s.Cluster.ClusterNetwork.CNI.Cilium != nil:
+		addonsToDeploy = append(addonsToDeploy, addonAction{
+			name: resources.AddonCNICilium,
+		})
+	case s.Cluster.ClusterNetwork.CNI.WeaveNet != nil:
+		addonsToDeploy = append(addonsToDeploy, addonAction{
+			name: resources.AddonCNIWeavenet,
+			supportFn: func() error {
+				if s.Cluster.ClusterNetwork.CNI.WeaveNet.Encrypted {
+					if err := weave.EnsureSecret(s); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+		})
+	}
+
+	addonsToDeploy = append(addonsToDeploy, addonAction{
+		name: resources.AddonNodeLocalDNS,
+	})
+
+	if s.Cluster.MachineController.Deploy {
+		addonsToDeploy = append(addonsToDeploy, addonAction{
+			name: resources.AddonMachineController,
+		})
+	}
+
+	addonsToDeploy = ensureCSIAddons(s, addonsToDeploy)
+
+	if s.Cluster.CloudProvider.External {
+		addonsToDeploy = ensureCCMAddons(s, addonsToDeploy)
+	}
+
+	return
+}
+
+func Ensure(s *state.State) error {
+	addonsToDeploy := collectAddons(s)
+
+	for _, add := range addonsToDeploy {
+		if add.supportFn != nil {
+			if err := add.supportFn(); err != nil {
+				return err
+			}
+		}
+		if err := EnsureAddonByName(s, add.name); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
 
 // EnsureUserAddons deploys addons that are provided by the user and that are
 // not embedded.
@@ -63,30 +148,27 @@ func EnsureUserAddons(s *state.State) error {
 		return err
 	}
 
-	if applier.LocalFS == nil {
-		s.Logger.Infoln("Skipping applying addons because addons are not enabled...")
-		return nil
-	}
-
 	s.Logger.Infof("Applying user provided addons...")
-
-	customAddons, err := fs.ReadDir(applier.LocalFS, ".")
-	if err != nil {
-		return errors.Wrap(err, "failed to read addons directory")
-	}
-
 	combinedAddons := map[string]string{}
-	for _, useraddon := range customAddons {
-		if !useraddon.IsDir() {
-			continue
+
+	if applier.LocalFS != nil {
+		customAddons, err := fs.ReadDir(applier.LocalFS, ".")
+		if err != nil {
+			return errors.Wrap(err, "failed to read addons directory")
 		}
 
-		if _, ok := embeddedAddons[useraddon.Name()]; ok {
-			continue
-		}
+		for _, useraddon := range customAddons {
+			if !useraddon.IsDir() {
+				continue
+			}
 
-		if _, ok := combinedAddons[useraddon.Name()]; !ok {
-			combinedAddons[useraddon.Name()] = ""
+			if _, ok := embeddedAddons[useraddon.Name()]; ok {
+				continue
+			}
+
+			if _, ok := combinedAddons[useraddon.Name()]; !ok {
+				combinedAddons[useraddon.Name()] = ""
+			}
 		}
 	}
 
@@ -96,10 +178,10 @@ func EnsureUserAddons(s *state.State) error {
 		}
 
 		if embeddedAddon.Delete {
-			s.Logger.Infof("Deleting addon %q...", embeddedAddon.Name)
 			if err := applier.loadAndDeleteAddon(s, applier.EmbededFS, embeddedAddon.Name); err != nil {
 				return errors.Wrapf(err, "failed to load and delete the addon %q", embeddedAddon.Name)
 			}
+
 			continue
 		}
 
@@ -109,16 +191,16 @@ func EnsureUserAddons(s *state.State) error {
 	}
 
 	for addonName := range combinedAddons {
-		s.Logger.Infof("Applying addon %q...", addonName)
-
 		if err := EnsureAddonByName(s, addonName); err != nil {
 			return errors.Wrapf(err, "failed to load and apply the addon %q", addonName)
 		}
 	}
 
-	s.Logger.Info("Applying addons from the root directory...")
-	if err := applier.loadAndApplyAddon(s, applier.LocalFS, ""); err != nil {
-		return errors.Wrap(err, "failed to load and apply addons from the root directory")
+	if applier.LocalFS != nil {
+		s.Logger.Info("Applying addons from the root directory...")
+		if err := applier.loadAndApplyAddon(s, applier.LocalFS, ""); err != nil {
+			return errors.Wrap(err, "failed to load and apply addons from the root directory")
+		}
 	}
 
 	return nil
@@ -147,6 +229,7 @@ func EnsureAddonByName(s *state.State, addonName string) error {
 				if err := applier.loadAndApplyAddon(s, applier.LocalFS, a.Name()); err != nil {
 					return errors.Wrap(err, "failed to load and apply addon")
 				}
+
 				return nil
 			}
 		}
@@ -165,6 +248,7 @@ func EnsureAddonByName(s *state.State, addonName string) error {
 			if err := applier.loadAndApplyAddon(s, applier.EmbededFS, a.Name()); err != nil {
 				return errors.Wrap(err, "failed to load and apply embedded addon")
 			}
+
 			return nil
 		}
 	}
@@ -172,84 +256,184 @@ func EnsureAddonByName(s *state.State, addonName string) error {
 	return errors.Errorf("addon %q does not exist", addonName)
 }
 
-// loadAndApplyAddon parses the addons manifests and runs kubectl apply.
-func (a *applier) loadAndApplyAddon(s *state.State, fsys fs.FS, addonName string) error {
-	manifest, err := a.getManifestsFromDirectory(s, fsys, addonName)
+// DeleteAddonByName deletes an addon by its name. It's required to keep the
+// old addon manifest for this to work, however, it's enough to keep only
+// metadata (i.e. spec is not needed). If the addon is not found in the addons
+// directory, or if the addons are not enabled, it will search
+// for the embedded addons.
+func DeleteAddonByName(s *state.State, addonName string) error {
+	applier, err := newAddonsApplier(s)
 	if err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 
-	if len(strings.TrimSpace(manifest)) == 0 {
-		if len(addonName) != 0 {
-			s.Logger.Warnf("Addon directory %q is empty, skipping...", addonName)
+	if applier.LocalFS != nil {
+		addons, lErr := fs.ReadDir(applier.LocalFS, ".")
+		if lErr != nil {
+			return errors.Wrap(lErr, "failed to read addons directory")
 		}
 
-		return nil
-	}
+		for _, a := range addons {
+			if !a.IsDir() {
+				continue
+			}
+			if a.Name() == addonName {
+				if err := applier.loadAndDeleteAddon(s, applier.LocalFS, a.Name()); err != nil {
+					return errors.Wrap(err, "failed to load and apply addon")
+				}
 
-	return errors.Wrap(
-		runKubectlApply(s, manifest, addonName),
-		"failed to apply addons",
-	)
-}
-
-// loadAndApplyAddon parses the addons manifests and runs kubectl apply.
-func (a *applier) loadAndDeleteAddon(s *state.State, fsys fs.FS, addonName string) error {
-	manifest, err := a.getManifestsFromDirectory(s, fsys, addonName)
-	if err != nil {
-		return errors.WithStack(err)
-	}
-
-	if len(strings.TrimSpace(manifest)) == 0 {
-		if len(addonName) != 0 {
-			s.Logger.Warnf("Addon directory %q is empty, skipping...", addonName)
+				return nil
+			}
 		}
-
-		return nil
 	}
 
-	return errors.Wrap(
-		runKubectlDelete(s, manifest, addonName),
-		"failed to apply addons",
-	)
+	addons, eErr := fs.ReadDir(applier.EmbededFS, ".")
+	if eErr != nil {
+		return errors.Wrap(eErr, "failed to read embedded addons")
+	}
+
+	for _, a := range addons {
+		if !a.IsDir() {
+			continue
+		}
+		if a.Name() == addonName {
+			if err := applier.loadAndDeleteAddon(s, applier.EmbededFS, a.Name()); err != nil {
+				return errors.Wrap(err, "failed to load and apply embedded addon")
+			}
+
+			return nil
+		}
+	}
+
+	return errors.Errorf("addon %q does not exist", addonName)
 }
 
-// runKubectlApply runs kubectl apply command
-func runKubectlApply(s *state.State, manifest string, addonName string) error {
-	return s.RunTaskOnLeader(func(s *state.State, _ *kubeoneapi.HostConfig, conn ssh.Connection) error {
-		var (
-			cmd            = fmt.Sprintf(kubectlApplyScript, addonLabel, addonName)
-			stdin          = strings.NewReader(manifest)
-			stdout, stderr strings.Builder
+func ensureCSIAddons(s *state.State, addonsToDeploy []addonAction) []addonAction {
+	k8sVersion := semver.MustParse(s.Cluster.Versions.Kubernetes)
+	gte23 := greaterThan23.Check(k8sVersion)
+
+	// We deploy available CSI drivers un-conditionally for k8s v1.23+
+	//
+	// CSIMigration, if applicable, for the cloud providers is turned on by default and requires installation of CSI drviers even if we
+	// don't use external CCM. Although mount operations would fall-back to in-tree solution if CSI driver is not available. Fallback
+	// for provision operations is NOT supported by in-tree solution.
+
+	switch {
+	// CSI driver is required for k8s v.1.23+
+	case s.Cluster.CloudProvider.AWS != nil && (gte23 || s.Cluster.CloudProvider.External):
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCSIAwsEBS,
+			},
+		)
+	// CSI driver is required for k8s v.1.23+
+	case s.Cluster.CloudProvider.Azure != nil && (gte23 || s.Cluster.CloudProvider.External):
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCSIAzureDisk,
+			},
+			addonAction{
+				name: resources.AddonCSIAzureFile,
+			},
 		)
 
-		_, err := conn.POpen(cmd, stdin, &stdout, &stderr)
-		if s.Verbose {
-			fmt.Printf("+ %s\n", cmd)
-			fmt.Printf("%s", stderr.String())
-			fmt.Printf("%s", stdout.String())
-		}
-
-		return err
-	})
-}
-
-// runKubectlDelete runs kubectl delete command
-func runKubectlDelete(s *state.State, manifest string, addonName string) error {
-	return s.RunTaskOnLeader(func(s *state.State, _ *kubeoneapi.HostConfig, conn ssh.Connection) error {
-		var (
-			cmd            = fmt.Sprintf(kubectlDeleteScript, addonLabel, addonName)
-			stdin          = strings.NewReader(manifest)
-			stdout, stderr strings.Builder
+	// Install CSI driver unconditionally
+	case s.Cluster.CloudProvider.DigitalOcean != nil:
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCSIDigitalOcean,
+			},
+		)
+	// Install CSI driver unconditionally
+	case s.Cluster.CloudProvider.Hetzner != nil:
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCSIHetzner,
+			},
+		)
+	// Install CSI driver unconditionally
+	case s.Cluster.CloudProvider.Nutanix != nil:
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCSINutanix,
+			},
+		)
+	// Install CSI driver unconditionally
+	case s.Cluster.CloudProvider.Openstack != nil:
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCSIOpenStackCinder,
+			},
 		)
 
-		_, err := conn.POpen(cmd, stdin, &stdout, &stderr)
-		if s.Verbose {
-			fmt.Printf("+ %s\n", cmd)
-			fmt.Printf("%s", stderr.String())
-			fmt.Printf("%s", stdout.String())
-		}
+	// Install CSI driver only if external cloud provider is used
+	case s.Cluster.CloudProvider.Vsphere != nil && s.Cluster.CloudProvider.External:
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCSIVsphere,
+			},
+		)
+	default:
+		s.Logger.Infof("CSI driver for %q not yet supported, skipping", s.Cluster.CloudProvider.CloudProviderName())
+	}
 
-		return err
-	})
+	return addonsToDeploy
+}
+
+func ensureCCMAddons(s *state.State, addonsToDeploy []addonAction) []addonAction {
+	switch {
+	case s.Cluster.CloudProvider.AWS != nil:
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCCMAws,
+			},
+		)
+	case s.Cluster.CloudProvider.Azure != nil:
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCCMAzure,
+			},
+		)
+	case s.Cluster.CloudProvider.DigitalOcean != nil:
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCCMDigitalOcean,
+			},
+		)
+	case s.Cluster.CloudProvider.Hetzner != nil:
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCCMHetzner,
+			},
+		)
+	case s.Cluster.CloudProvider.Openstack != nil:
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCCMOpenStack,
+			},
+		)
+
+	case s.Cluster.CloudProvider.Vsphere != nil:
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCCMVsphere,
+				supportFn: func() error {
+					return migrateVsphereAddon(s)
+				},
+			},
+		)
+	case s.Cluster.CloudProvider.EquinixMetal != nil:
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCCMEquinixMetal,
+				supportFn: func() error {
+					return migratePacketToEquinixCCM(s)
+				},
+			},
+		)
+	default:
+		s.Logger.Infof("CCM driver for %q not yet supported, skipping", s.Cluster.CloudProvider.CloudProviderName())
+	}
+
+	return addonsToDeploy
 }

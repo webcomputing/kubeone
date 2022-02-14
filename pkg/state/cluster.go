@@ -23,7 +23,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 
-	"k8c.io/kubeone/pkg/apis/kubeone"
+	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
 
 	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
 	"k8s.io/client-go/rest"
@@ -35,6 +35,7 @@ type Cluster struct {
 	StaticWorkers           []Host
 	ExpectedVersion         *semver.Version
 	EncryptionConfiguration *EncryptionConfiguration
+	CCMClusterName          string
 	CCMStatus               *CCMStatus
 	Lock                    sync.Mutex
 }
@@ -53,7 +54,7 @@ type CCMStatus struct {
 }
 
 type Host struct {
-	Config *kubeone.HostConfig
+	Config *kubeoneapi.HostConfig
 
 	ContainerRuntimeDocker     ComponentStatus
 	ContainerRuntimeContainerd ComponentStatus
@@ -157,6 +158,7 @@ func (c *Cluster) BrokenHosts() []string {
 			brokenNodes = append(brokenNodes, c.StaticWorkers[i].Config.Hostname)
 		}
 	}
+
 	return brokenNodes
 }
 

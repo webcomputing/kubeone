@@ -17,9 +17,9 @@ limitations under the License.
 package scheme
 
 import (
-	"k8c.io/kubeone/pkg/apis/kubeone"
-	kubeonev1alpha1 "k8c.io/kubeone/pkg/apis/kubeone/v1alpha1"
+	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
 	kubeonev1beta1 "k8c.io/kubeone/pkg/apis/kubeone/v1beta1"
+	kubeonev1beta2 "k8c.io/kubeone/pkg/apis/kubeone/v1beta2"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -41,8 +41,8 @@ func init() {
 
 // AddToScheme builds the KubeOne scheme
 func AddToScheme(scheme *runtime.Scheme) {
-	utilruntime.Must(kubeone.AddToScheme(scheme))
+	utilruntime.Must(kubeoneapi.AddToScheme(scheme))
+	utilruntime.Must(kubeonev1beta2.AddToScheme(scheme))
 	utilruntime.Must(kubeonev1beta1.AddToScheme(scheme))
-	utilruntime.Must(kubeonev1alpha1.AddToScheme(scheme))
 	utilruntime.Must(scheme.SetVersionPriority(kubeonev1beta1.SchemeGroupVersion))
 }

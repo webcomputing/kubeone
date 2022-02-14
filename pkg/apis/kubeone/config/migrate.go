@@ -21,27 +21,25 @@ import (
 
 	"github.com/pkg/errors"
 
-	kubeonev1alpha1 "k8c.io/kubeone/pkg/apis/kubeone/v1alpha1"
 	kubeonev1beta1 "k8c.io/kubeone/pkg/apis/kubeone/v1beta1"
+	kubeonev1beta2 "k8c.io/kubeone/pkg/apis/kubeone/v1beta2"
 	"k8c.io/kubeone/pkg/yamled"
 )
 
-// MigrateOldConfig migrates KubeOneCluster v1alpha1 object to v1beta1
+// MigrateOldConfig migrates KubeOneCluster v1beta1 object to v1beta2
 func MigrateOldConfig(clusterFilePath string) (interface{}, error) {
-	var emptyVal struct{}
-
 	oldConfig, err := loadClusterConfig(clusterFilePath)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to parse the old config")
 	}
 
-	// Check is kubeone.io/v1alpha1 config provided
+	// Check is kubeone.io/v1beta1 config provided
 	apiVersion, apiVersionExists := oldConfig.GetString(yamled.Path{"apiVersion"})
 	if !apiVersionExists {
 		return nil, errors.New("apiVersion not present in the manifest")
 	}
-	if apiVersion != kubeonev1alpha1.SchemeGroupVersion.String() {
-		return nil, errors.Errorf("migration is available only for %q API, but %q is given", kubeonev1alpha1.SchemeGroupVersion.String(), apiVersion)
+	if apiVersion != kubeonev1beta1.SchemeGroupVersion.String() {
+		return nil, errors.Errorf("migration is available only for %q API, but %q is given", kubeonev1beta1.SchemeGroupVersion.String(), apiVersion)
 	}
 
 	// Ensure kind is KubeOneCluster
@@ -53,116 +51,47 @@ func MigrateOldConfig(clusterFilePath string) (interface{}, error) {
 		return nil, errors.Errorf("migration is available only for kind %q, but %q is given", KubeOneClusterKind, kind)
 	}
 
-	// The APIVersion has been changed to kubeone.io/v1beta1
-	oldConfig.Set(yamled.Path{"apiVersion"}, kubeonev1beta1.SchemeGroupVersion.String())
-	oldConfig.Set(yamled.Path{"kind"}, "KubeOneCluster")
+	// The APIVersion has been changed to kubeone.k8c.io/v1beta2
+	oldConfig.Set(yamled.Path{"apiVersion"}, kubeonev1beta2.SchemeGroupVersion.String())
 
-	// The .hosts field has been moved to .controlPlane.hosts
-	// The .hosts.untaint field is replaced with .controlPlane.hosts.taints field
-	migrateHosts(oldConfig, "hosts", "controlPlane")
-	// The .staticWorkers field has been renamed to .staticWorkers.hosts
-	// The .staticWorkers.untaint field has been replaced with .staticWorkers.hosts.taints
-	migrateHosts(oldConfig, "staticWorkers", "staticWorkers")
+	// AssetConfiguration API has been removed from the v1beta2 API.
+	// We are not able to automatically migrate manifests using the AssetConfiguration API
+	// because it has multiple use cases:
+	//   * EKS-D clusters -- support for EKS-D cluster has been entirely removed in KubeOne 1.4
+	//   * Problem with CoreDNS image when using overwriteRegistry -- can be mitigated by using the latest image-loader
+	//     script or by using the RegistryConfiguration API (registry mirrors)
+	_, assetConfigExists := oldConfig.Get(yamled.Path{"assetConfiguration"})
+	if assetConfigExists {
+		return nil, errors.New("the AssetConfiguration API has been removed from the v1beta2 API, please check the docs for information on how to migrate")
+	}
 
-	// The cloud providers are now defined using typed structs, instead of .cloudProvider.Name
-	cloudProviderName, cloudProviderNameExists := oldConfig.GetString(yamled.Path{"cloudProvider", "name"})
-	if cloudProviderNameExists {
-		oldConfig.Remove(yamled.Path{"cloudProvider", "name"})
-		switch kubeonev1alpha1.CloudProviderName(cloudProviderName) {
-		case kubeonev1alpha1.CloudProviderNameAWS:
-			oldConfig.Set(yamled.Path{"cloudProvider", "aws"}, emptyVal)
-		case kubeonev1alpha1.CloudProviderNameAzure:
-			oldConfig.Set(yamled.Path{"cloudProvider", "azure"}, emptyVal)
-		case kubeonev1alpha1.CloudProviderNameDigitalOcean:
-			oldConfig.Set(yamled.Path{"cloudProvider", "digitalocean"}, emptyVal)
-		case kubeonev1alpha1.CloudProviderNameGCE:
-			oldConfig.Set(yamled.Path{"cloudProvider", "gce"}, emptyVal)
-		case kubeonev1alpha1.CloudProviderNameHetzner:
-			oldConfig.Set(yamled.Path{"cloudProvider", "hetzner"}, emptyVal)
-		case kubeonev1alpha1.CloudProviderNameOpenStack:
-			oldConfig.Set(yamled.Path{"cloudProvider", "openstack"}, emptyVal)
-		case kubeonev1alpha1.CloudProviderNamePacket:
-			oldConfig.Set(yamled.Path{"cloudProvider", "packet"}, emptyVal)
-		case kubeonev1alpha1.CloudProviderNameVSphere:
-			oldConfig.Set(yamled.Path{"cloudProvider", "vsphere"}, emptyVal)
-		case kubeonev1alpha1.CloudProviderNameNone:
-			oldConfig.Set(yamled.Path{"cloudProvider", "none"}, emptyVal)
-		default:
-			return nil, errors.Errorf("invalid cloud provider %q", kubeonev1alpha1.CloudProviderName(cloudProviderName))
+	// Packet has been renamed to Equinix Metal and as a result of this change
+	// .cloudProvider.packet field has been renamed to .cloudProvider.equinixmetal
+	packetSpec, cloudProviderPacketExists := oldConfig.Get(yamled.Path{"cloudProvider", "packet"})
+	if cloudProviderPacketExists {
+		oldConfig.Remove(yamled.Path{"cloudProvider", "packet"})
+		oldConfig.Set(yamled.Path{"cloudProvider", "equinixmetal"}, packetSpec)
+	}
+
+	// The PodPresets feature has been removed from the v1beta2 API because Kubernetes doesn't support it starting
+	// with Kubernetes 1.20.
+	_, podPresetsExists := oldConfig.Get(yamled.Path{"features", "podPresets"})
+	if podPresetsExists {
+		oldConfig.Remove(yamled.Path{"features", "podPresets"})
+	}
+
+	// The addons path is not defaulted to "./addons" any longer to better support embedded addons.
+	// To keep the backwards compatibility, migration will set the addons path to "./addons" if it's
+	// empty or unset. The user can remove it if it's not needed.
+	_, addonsExists := oldConfig.Get(yamled.Path{"addons"})
+	if addonsExists {
+		addonsPath, addonsPathExists := oldConfig.Get(yamled.Path{"addons", "path"})
+		if !addonsPathExists || addonsPath == "" {
+			oldConfig.Set(yamled.Path{"addons", "path"}, "./addons")
 		}
 	}
-
-	// The .clusterNetwork.networkID field has been moved to the HetznerSpec
-	networkID, networkIDExists := oldConfig.GetString(yamled.Path{"clusterNetwork", "networkID"})
-	if networkIDExists {
-		oldConfig.Remove(yamled.Path{"clusterNetwork", "networkID"})
-		// If we have set empty .cloudProvider.hetzner before, remove it, as it's not possible
-		// to override the old value
-		oldConfig.Remove(yamled.Path{"cloudProvider", "hetzner"})
-		oldConfig.Set(yamled.Path{"cloudProvider", "hetzner", "networkID"}, networkID)
-	}
-
-	// The CNI plugins are now defined using typed structs, instead of .clusterNetwork.cni.name
-	_, cniProviderExists := oldConfig.Get(yamled.Path{"clusterNetwork", "cni"})
-	if cniProviderExists {
-		cniProviderName, _ := oldConfig.GetString(yamled.Path{"clusterNetwork", "cni", "provider"})
-		oldConfig.Remove(yamled.Path{"clusterNetwork", "cni", "provider"})
-
-		encrypted, _ := oldConfig.GetBool(yamled.Path{"clusterNetwork", "cni", "encrypted"})
-		oldConfig.Remove(yamled.Path{"clusterNetwork", "cni", "encrypted"})
-
-		switch kubeonev1alpha1.CNIProvider(cniProviderName) {
-		case kubeonev1alpha1.CNIProviderCanal:
-			oldConfig.Set(yamled.Path{"clusterNetwork", "cni", "canal"}, emptyVal)
-		case kubeonev1alpha1.CNIProviderWeaveNet:
-			if encrypted {
-				oldConfig.Set(yamled.Path{"clusterNetwork", "cni", "weaveNet", "encrypted"}, true)
-			} else {
-				oldConfig.Set(yamled.Path{"clusterNetwork", "cni", "weaveNet"}, emptyVal)
-			}
-		case kubeonev1alpha1.CNIProviderExternal:
-			oldConfig.Set(yamled.Path{"clusterNetwork", "cni", "external"}, emptyVal)
-		default:
-			return nil, errors.Errorf("invalid cni provider %q", kubeonev1alpha1.CNIProvider(cniProviderName))
-		}
-	}
-
-	// The .workers field has been renamed to .dynamicWorkers
-	workers, workersExists := oldConfig.Get(yamled.Path{"workers"})
-	if workersExists {
-		oldConfig.Remove(yamled.Path{"workers"})
-		oldConfig.Set(yamled.Path{"dynamicWorkers"}, workers)
-	}
-
-	// The .machineController.provider field has been removed
-	oldConfig.Remove(yamled.Path{"machineController", "provider"})
-
-	// The .credentials field has been removed
-	oldConfig.Remove(yamled.Path{"credentials"})
 
 	return oldConfig.Root(), nil
-}
-
-func migrateHosts(doc *yamled.Document, oldKey, newKey string) {
-	hosts, hostsExists := doc.GetArray(yamled.Path{oldKey})
-	if hostsExists {
-		var emptyArr []string
-
-		// The .hosts.untaint field has been replaced with .hosts.taints which takes a list of taints
-		// In case .hosts.untaint has been set to true in the old config, set .hosts.taints to empty array.
-		total := len(hosts)
-		for i := 0; i < total; i++ {
-			untaint, _ := doc.GetBool(yamled.Path{oldKey, i, "untaint"})
-			doc.Remove(yamled.Path{oldKey, i, "untaint"})
-			if untaint {
-				doc.Set(yamled.Path{oldKey, i, "taints"}, emptyArr)
-			}
-		}
-
-		// Rename .hosts to .controlPlane.hosts
-		doc.Remove(yamled.Path{oldKey})
-		doc.Set(yamled.Path{newKey, "hosts"}, hosts)
-	}
 }
 
 // loadClusterConfig takes path to the Cluster Config (old API) and returns yamled.Document

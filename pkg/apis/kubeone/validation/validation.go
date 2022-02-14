@@ -19,29 +19,43 @@ package validation
 import (
 	"bytes"
 	"crypto/x509"
+	"fmt"
 	"net"
 	"reflect"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
 
-	"k8c.io/kubeone/pkg/apis/kubeone"
+	"k8c.io/kubeone/pkg/addons"
+	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
+	"k8c.io/kubeone/pkg/semverutil"
 
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
+const (
+	// lowerVersionConstraint defines a semver constraint that validates Kubernetes versions against a lower bound
+	lowerVersionConstraint = ">= 1.20"
+	// upperVersionConstraint defines a semver constraint that validates Kubernetes versions against an upper bound
+	upperVersionConstraint = "<= 1.23"
+)
+
+var (
+	lowerConstraint = semverutil.MustParseConstraint(lowerVersionConstraint)
+	upperConstraint = semverutil.MustParseConstraint(upperVersionConstraint)
+)
+
 // ValidateKubeOneCluster validates the KubeOneCluster object
-func ValidateKubeOneCluster(c kubeone.KubeOneCluster) field.ErrorList {
+func ValidateKubeOneCluster(c kubeoneapi.KubeOneCluster) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	if len(c.Name) == 0 {
-		allErrs = append(allErrs, field.Required(field.NewPath("name"), "cluster name `.name` is a required field."))
-	}
+	allErrs = append(allErrs, ValidateName(c.Name, field.NewPath("name"))...)
 	allErrs = append(allErrs, ValidateControlPlaneConfig(c.ControlPlane, field.NewPath("controlPlane"))...)
 	allErrs = append(allErrs, ValidateAPIEndpoint(c.APIEndpoint, field.NewPath("apiEndpoint"))...)
 	allErrs = append(allErrs, ValidateCloudProviderSpec(c.CloudProvider, field.NewPath("provider"))...)
 	allErrs = append(allErrs, ValidateVersionConfig(c.Versions, field.NewPath("versions"))...)
-	allErrs = append(allErrs, ValidateCloudProviderSupportsKubernetes(c, field.NewPath(""))...)
+	allErrs = append(allErrs, ValidateKubernetesSupport(c, field.NewPath(""))...)
 	allErrs = append(allErrs, ValidateContainerRuntimeConfig(c.ContainerRuntime, c.Versions, field.NewPath("containerRuntime"))...)
 	allErrs = append(allErrs, ValidateClusterNetworkConfig(c.ClusterNetwork, field.NewPath("clusterNetwork"))...)
 	allErrs = append(allErrs, ValidateStaticWorkersConfig(c.StaticWorkers, field.NewPath("staticWorkers"))...)
@@ -57,12 +71,60 @@ func ValidateKubeOneCluster(c kubeone.KubeOneCluster) field.ErrorList {
 	allErrs = append(allErrs, ValidateFeatures(c.Features, c.Versions, field.NewPath("features"))...)
 	allErrs = append(allErrs, ValidateAddons(c.Addons, field.NewPath("addons"))...)
 	allErrs = append(allErrs, ValidateRegistryConfiguration(c.RegistryConfiguration, field.NewPath("registryConfiguration"))...)
+	allErrs = append(allErrs,
+		ValidateContainerRuntimeVSRegistryConfiguration(
+			c.ContainerRuntime,
+			field.NewPath("containerRuntime"),
+			c.RegistryConfiguration,
+			field.NewPath("registryConfiguration"),
+		)...)
+
+	return allErrs
+}
+
+func ValidateContainerRuntimeVSRegistryConfiguration(
+	cr kubeoneapi.ContainerRuntimeConfig,
+	crFldPath *field.Path,
+	rc *kubeoneapi.RegistryConfiguration,
+	rcFldPath *field.Path,
+) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	switch {
+	case rc == nil:
+	case cr.Containerd != nil && cr.Containerd.Registries != nil:
+		containerdRegistriesField := crFldPath.Child("containerd", "registries")
+		allErrs = append(allErrs, field.Invalid(
+			containerdRegistriesField,
+			"",
+			fmt.Sprintf("can't have both %s and %s set", rcFldPath.String(), containerdRegistriesField.String()),
+		))
+	case cr.Docker != nil && cr.Docker.RegistryMirrors != nil:
+		dockerRegistryMirrorsField := crFldPath.Child("docker", "registryMirrors")
+		allErrs = append(allErrs, field.Invalid(
+			dockerRegistryMirrorsField,
+			"",
+			fmt.Sprintf("can't have both %s and %s set", rcFldPath.String(), dockerRegistryMirrorsField.String()),
+		))
+	}
+
+	return allErrs
+}
+
+// ValidateName validates the Name of cluster
+func ValidateName(name string, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	errs := validation.IsDNS1123Subdomain(name)
+	for _, err := range errs {
+		allErrs = append(allErrs, field.Invalid(fldPath, name, err))
+	}
 
 	return allErrs
 }
 
 // ValidateControlPlaneConfig validates the ControlPlaneConfig structure
-func ValidateControlPlaneConfig(c kubeone.ControlPlaneConfig, fldPath *field.Path) field.ErrorList {
+func ValidateControlPlaneConfig(c kubeoneapi.ControlPlaneConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if len(c.Hosts) > 0 {
@@ -76,7 +138,7 @@ func ValidateControlPlaneConfig(c kubeone.ControlPlaneConfig, fldPath *field.Pat
 }
 
 // ValidateAPIEndpoint validates the APIEndpoint structure
-func ValidateAPIEndpoint(a kubeone.APIEndpoint, fldPath *field.Path) field.ErrorList {
+func ValidateAPIEndpoint(a kubeoneapi.APIEndpoint, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if len(a.Host) == 0 {
@@ -89,11 +151,22 @@ func ValidateAPIEndpoint(a kubeone.APIEndpoint, fldPath *field.Path) field.Error
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("port"), a.Port, "apiEndpoint.Port must be lower than 65535"))
 	}
 
+	visited := make(map[string]bool)
+	for _, altName := range a.AlternativeNames {
+		if visited[altName] {
+			allErrs = append(allErrs, field.Invalid(fldPath, altName, "duplicates are not allowed in alternative names"))
+
+			break
+		} else {
+			visited[altName] = true
+		}
+	}
+
 	return allErrs
 }
 
 // ValidateCloudProviderSpec validates the CloudProviderSpec structure
-func ValidateCloudProviderSpec(p kubeone.CloudProviderSpec, fldPath *field.Path) field.ErrorList {
+func ValidateCloudProviderSpec(p kubeoneapi.CloudProviderSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	providerFound := false
@@ -127,6 +200,15 @@ func ValidateCloudProviderSpec(p kubeone.CloudProviderSpec, fldPath *field.Path)
 		}
 		providerFound = true
 	}
+	if p.Nutanix != nil {
+		if providerFound {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("nutanix"), "only one provider can be used at the same time"))
+		}
+		providerFound = true
+		if p.External {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("external"), "external is not supported on nutanix clusters"))
+		}
+	}
 	if p.Openstack != nil {
 		if providerFound {
 			allErrs = append(allErrs, field.Forbidden(fldPath.Child("openstack"), "only one provider can be used at the same time"))
@@ -136,9 +218,9 @@ func ValidateCloudProviderSpec(p kubeone.CloudProviderSpec, fldPath *field.Path)
 		}
 		providerFound = true
 	}
-	if p.Packet != nil {
+	if p.EquinixMetal != nil {
 		if providerFound {
-			allErrs = append(allErrs, field.Forbidden(fldPath.Child("packet"), "only one provider can be used at the same time"))
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("equinixmetal"), "only one provider can be used at the same time"))
 		}
 		providerFound = true
 	}
@@ -175,41 +257,68 @@ func ValidateCloudProviderSpec(p kubeone.CloudProviderSpec, fldPath *field.Path)
 }
 
 // ValidateVersionConfig validates the VersionConfig structure
-func ValidateVersionConfig(version kubeone.VersionConfig, fldPath *field.Path) field.ErrorList {
+func ValidateVersionConfig(version kubeoneapi.VersionConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	v, err := semver.NewVersion(version.Kubernetes)
 	if err != nil {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("kubernetes"), version, ".versions.kubernetes is not a semver string"))
+
 		return allErrs
 	}
-	if v.Major() != 1 || v.Minor() < 19 {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("kubernetes"), version, "kubernetes versions lower than 1.19 are not supported. You need to use an older KubeOne version to upgrade your cluster to v1.19. Please refer to the Compatibility section of docs for more details."))
-	}
+
 	if strings.HasPrefix(version.Kubernetes, "v") {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("kubernetes"), version, ".versions.kubernetes can't start with a leading 'v'"))
 	}
 
+	if valid, errs := lowerConstraint.Validate(v); !valid {
+		for _, err := range errs {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("kubernetes"), version, fmt.Sprintf("kubernetes version does not satisfy version constraint '%s': %s. You need to use an older KubeOne version to upgrade your cluster to a supported version. Please refer to the Compatibility section of docs for more details.", lowerVersionConstraint, err.Error())))
+		}
+	}
+
+	if valid, errs := upperConstraint.Validate(v); !valid {
+		for _, err := range errs {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("kubernetes"), version, fmt.Sprintf("kubernetes version does not satisfy version constraint '%s': %s. This version is not yet supported. Please refer to the Compatibility section of docs for more details.", upperVersionConstraint, err.Error())))
+		}
+	}
+
 	return allErrs
 }
 
-func ValidateCloudProviderSupportsKubernetes(c kubeone.KubeOneCluster, fldPath *field.Path) field.ErrorList {
+func ValidateKubernetesSupport(c kubeoneapi.KubeOneCluster, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
+
+	if strings.Contains(c.Versions.Kubernetes, "-eks-") {
+		return append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, "Amazon EKS-D clusters are not supported by KubeOne 1.4+"))
+	}
 
 	v, err := semver.NewVersion(c.Versions.Kubernetes)
 	if err != nil {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, ".versions.kubernetes is not a semver string"))
-		return allErrs
+		return append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, ".versions.kubernetes is not a semver string"))
 	}
 
-	if c.CloudProvider.Vsphere != nil && v.Minor() >= 22 {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, "kubernetes versions 1.22.0 and newer are currently not supported for vsphere clusters"))
+	if v.Minor() >= 23 {
+		switch {
+		case c.CloudProvider.Vsphere != nil:
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, "kubernetes versions 1.23.0 and newer are currently not supported for vsphere clusters"))
+		case c.ClusterNetwork.KubeProxy != nil && c.ClusterNetwork.KubeProxy.IPVS != nil:
+			if c.ClusterNetwork.CNI != nil && c.ClusterNetwork.CNI.Canal != nil {
+				allErrs = append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, "kubernetes versions 1.23.0 and newer are currently not supported for clusters running kube-proxy in ipvs mode with Canal CNI"))
+			} else if c.ClusterNetwork.CNI != nil && c.ClusterNetwork.CNI.External != nil && c.Addons != nil {
+				for _, addon := range c.Addons.Addons {
+					if addon.Name == "calico-vxlan" {
+						allErrs = append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, "kubernetes versions 1.23.0 and newer are currently not supported for clusters running kube-proxy in ipvs mode with Calico CNI"))
+					}
+				}
+			}
+		}
 	}
 
 	return allErrs
 }
 
-func ValidateContainerRuntimeConfig(cr kubeone.ContainerRuntimeConfig, versions kubeone.VersionConfig, fldPath *field.Path) field.ErrorList {
+func ValidateContainerRuntimeConfig(cr kubeoneapi.ContainerRuntimeConfig, versions kubeoneapi.VersionConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	allCRs := []interface{}{
@@ -229,9 +338,9 @@ func ValidateContainerRuntimeConfig(cr kubeone.ContainerRuntimeConfig, versions 
 
 	if cr.Docker != nil {
 		kubeVer, _ := semver.NewVersion(versions.Kubernetes)
-		gteKube122Condition, _ := semver.NewConstraint(">= 1.22")
-		if gteKube122Condition.Check(kubeVer) {
-			allErrs = append(allErrs, field.Invalid(fldPath, cr.Docker, "kubernetes v1.22+ require containerd container runtime"))
+		gteKube124Condition, _ := semver.NewConstraint(">= 1.24")
+		if gteKube124Condition.Check(kubeVer) {
+			allErrs = append(allErrs, field.Invalid(fldPath, cr.Docker, "kubernetes v1.24+ requires containerd container runtime"))
 		}
 	}
 
@@ -239,7 +348,7 @@ func ValidateContainerRuntimeConfig(cr kubeone.ContainerRuntimeConfig, versions 
 }
 
 // ValidateClusterNetworkConfig validates the ClusterNetworkConfig structure
-func ValidateClusterNetworkConfig(c kubeone.ClusterNetworkConfig, fldPath *field.Path) field.ErrorList {
+func ValidateClusterNetworkConfig(c kubeoneapi.ClusterNetworkConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if len(c.PodSubnet) > 0 {
@@ -252,8 +361,14 @@ func ValidateClusterNetworkConfig(c kubeone.ClusterNetworkConfig, fldPath *field
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("serviceSubnet"), c.ServiceSubnet, ".clusterNetwork.serviceSubnet must be a valid CIDR string"))
 		}
 	}
+
 	if c.CNI != nil {
 		allErrs = append(allErrs, ValidateCNI(c.CNI, fldPath.Child("cni"))...)
+
+		// validated cilium kube-proxy replacement
+		if c.CNI.Cilium != nil && c.CNI.Cilium.KubeProxyReplacement != kubeoneapi.KubeProxyReplacementDisabled && (c.KubeProxy == nil || !c.KubeProxy.SkipInstallation) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("cni"), c.CNI.Cilium.KubeProxyReplacement, ".cilium.kubeProxyReplacement cannot be set with kube-proxy enabled"))
+		}
 	}
 	if c.KubeProxy != nil {
 		allErrs = append(allErrs, ValidateKubeProxy(c.KubeProxy, fldPath.Child("kubeProxy"))...)
@@ -262,7 +377,7 @@ func ValidateClusterNetworkConfig(c kubeone.ClusterNetworkConfig, fldPath *field
 	return allErrs
 }
 
-func ValidateKubeProxy(kbPrxConf *kubeone.KubeProxyConfig, fldPath *field.Path) field.ErrorList {
+func ValidateKubeProxy(kbPrxConf *kubeoneapi.KubeProxyConfig, fldPath *field.Path) field.ErrorList {
 	var (
 		allErrs     field.ErrorList
 		configFound bool
@@ -282,7 +397,7 @@ func ValidateKubeProxy(kbPrxConf *kubeone.KubeProxyConfig, fldPath *field.Path) 
 }
 
 // ValidateCNI validates the CNI structure
-func ValidateCNI(c *kubeone.CNI, fldPath *field.Path) field.ErrorList {
+func ValidateCNI(c *kubeoneapi.CNI, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	cniFound := false
@@ -292,6 +407,12 @@ func ValidateCNI(c *kubeone.CNI, fldPath *field.Path) field.ErrorList {
 			allErrs = append(allErrs,
 				field.Invalid(fldPath.Child("canal").Child("mtu"), c.Canal.MTU, "invalid value"))
 		}
+	}
+	if c.Cilium != nil {
+		if cniFound {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("cilium"), "only one cni plugin can be used at the same time"))
+		}
+		cniFound = true
 	}
 	if c.WeaveNet != nil {
 		if cniFound {
@@ -314,7 +435,7 @@ func ValidateCNI(c *kubeone.CNI, fldPath *field.Path) field.ErrorList {
 }
 
 // ValidateStaticWorkersConfig validates the StaticWorkersConfig structure
-func ValidateStaticWorkersConfig(staticWorkers kubeone.StaticWorkersConfig, fldPath *field.Path) field.ErrorList {
+func ValidateStaticWorkersConfig(staticWorkers kubeoneapi.StaticWorkersConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if len(staticWorkers.Hosts) > 0 {
@@ -325,7 +446,7 @@ func ValidateStaticWorkersConfig(staticWorkers kubeone.StaticWorkersConfig, fldP
 }
 
 // ValidateDynamicWorkerConfig validates the DynamicWorkerConfig structure
-func ValidateDynamicWorkerConfig(workerset []kubeone.DynamicWorkerConfig, fldPath *field.Path) field.ErrorList {
+func ValidateDynamicWorkerConfig(workerset []kubeoneapi.DynamicWorkerConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	for _, w := range workerset {
@@ -357,7 +478,7 @@ func ValidateCABundle(caBundle string, fldPath *field.Path) field.ErrorList {
 }
 
 // ValidateFeatures validates the Features structure
-func ValidateFeatures(f kubeone.Features, versions kubeone.VersionConfig, fldPath *field.Path) field.ErrorList {
+func ValidateFeatures(f kubeoneapi.Features, versions kubeoneapi.VersionConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if f.PodNodeSelector != nil && f.PodNodeSelector.Enable {
@@ -369,19 +490,12 @@ func ValidateFeatures(f kubeone.Features, versions kubeone.VersionConfig, fldPat
 	if f.OpenIDConnect != nil && f.OpenIDConnect.Enable {
 		allErrs = append(allErrs, ValidateOIDCConfig(f.OpenIDConnect.Config, fldPath.Child("openidConnect"))...)
 	}
-	if f.PodPresets != nil && f.PodPresets.Enable {
-		kubeVer, _ := semver.NewVersion(versions.Kubernetes)
-		gteKube120Condition, _ := semver.NewConstraint(">= 1.20")
-		if gteKube120Condition.Check(kubeVer) {
-			allErrs = append(allErrs, field.Forbidden(fldPath.Child("podPresets"), "podPresets feature is removed in kubernetes 1.20+ and must be disabled"))
-		}
-	}
 
 	return allErrs
 }
 
 // ValidatePodNodeSelectorConfig validates the PodNodeSelectorConfig structure
-func ValidatePodNodeSelectorConfig(n kubeone.PodNodeSelectorConfig, fldPath *field.Path) field.ErrorList {
+func ValidatePodNodeSelectorConfig(n kubeoneapi.PodNodeSelectorConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if len(n.ConfigFilePath) == 0 {
@@ -392,7 +506,7 @@ func ValidatePodNodeSelectorConfig(n kubeone.PodNodeSelectorConfig, fldPath *fie
 }
 
 // ValidateStaticAuditLogConfig validates the StaticAuditLogConfig structure
-func ValidateStaticAuditLogConfig(s kubeone.StaticAuditLogConfig, fldPath *field.Path) field.ErrorList {
+func ValidateStaticAuditLogConfig(s kubeoneapi.StaticAuditLogConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if len(s.PolicyFilePath) == 0 {
@@ -415,7 +529,7 @@ func ValidateStaticAuditLogConfig(s kubeone.StaticAuditLogConfig, fldPath *field
 }
 
 // ValidateOIDCConfig validates the OpenIDConnectConfig structure
-func ValidateOIDCConfig(o kubeone.OpenIDConnectConfig, fldPath *field.Path) field.ErrorList {
+func ValidateOIDCConfig(o kubeoneapi.OpenIDConnectConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if len(o.IssuerURL) == 0 {
@@ -429,21 +543,32 @@ func ValidateOIDCConfig(o kubeone.OpenIDConnectConfig, fldPath *field.Path) fiel
 }
 
 // ValidateAddons validates the Addons configuration
-func ValidateAddons(o *kubeone.Addons, fldPath *field.Path) field.ErrorList {
+func ValidateAddons(o *kubeoneapi.Addons, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if o == nil || !o.Enable {
 		return allErrs
 	}
 	if o.Enable && len(o.Path) == 0 {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("path"), "", ".addons.path must be specified"))
+		// Addons are enabled, path is empty, and no embedded addon is specified
+		if len(o.Addons) == 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("enable"), o.Enable, ".addons.enable cannot be set to true without specifying either custom addon path or embedded addon"))
+		}
+
+		// Check if only embedded addons are being used; path is not required for embedded addons
+		embeddedAddonsOnly, err := addons.EmbeddedAddonsOnly(o.Addons)
+		if err != nil {
+			allErrs = append(allErrs, field.Invalid(fldPath, "", "failed to read embedded addons directory"))
+		} else if !embeddedAddonsOnly {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("path"), "", ".addons.path must be specified when using non-embedded addon(s)"))
+		}
 	}
 
 	return allErrs
 }
 
 // ValidateHostConfig validates the HostConfig structure
-func ValidateHostConfig(hosts []kubeone.HostConfig, fldPath *field.Path) field.ErrorList {
+func ValidateHostConfig(hosts []kubeoneapi.HostConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	leaderFound := false
@@ -467,12 +592,15 @@ func ValidateHostConfig(hosts []kubeone.HostConfig, fldPath *field.Path) field.E
 		if len(h.SSHUsername) == 0 {
 			allErrs = append(allErrs, field.Required(fldPath, "no SSH username given"))
 		}
+		if !h.OperatingSystem.IsValid() {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("operatingSystem"), h.OperatingSystem, "invalid operatingSystem provided"))
+		}
 	}
 
 	return allErrs
 }
 
-func ValidateRegistryConfiguration(r *kubeone.RegistryConfiguration, fldPath *field.Path) field.ErrorList {
+func ValidateRegistryConfiguration(r *kubeoneapi.RegistryConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if r == nil {
@@ -486,7 +614,7 @@ func ValidateRegistryConfiguration(r *kubeone.RegistryConfiguration, fldPath *fi
 	return allErrs
 }
 
-func ValidateAssetConfiguration(a *kubeone.AssetConfiguration, fldPath *field.Path) field.ErrorList {
+func ValidateAssetConfiguration(a *kubeoneapi.AssetConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if a.Kubernetes.ImageTag != "" {

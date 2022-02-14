@@ -32,6 +32,7 @@ import (
 
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
 	"k8c.io/kubeone/pkg/apis/kubeone/config"
+	"k8c.io/kubeone/pkg/containerruntime"
 	"k8c.io/kubeone/pkg/templates/machinecontroller"
 	"k8c.io/kubeone/pkg/yamled"
 
@@ -40,7 +41,7 @@ import (
 
 const (
 	// defaultKubernetesVersion is default Kubernetes version for the example configuration file
-	defaultKubernetesVersion = "1.18.2"
+	defaultKubernetesVersion = "1.22.3"
 	// defaultCloudProviderName is cloud provider to build the example configuration file for
 	defaultCloudProviderName = "aws"
 )
@@ -57,8 +58,9 @@ type printOpts struct {
 
 	ControlPlaneHosts string `longflag:"control-plane-hosts"`
 
-	APIEndpointHost string `longflag:"api-endpoint-host"`
-	APIEndpointPort int    `longflag:"api-endpoint-port"`
+	APIEndpointHost             string   `longflag:"api-endpoint-host"`
+	APIEndpointPort             int      `longflag:"api-endpoint-port"`
+	APIEndpointAlternativeNames []string `longflag:"api-endpoint-alternative-names"`
 
 	PodSubnet     string `longflag:"pod-subnet"`
 	ServiceSubnet string `longflag:"service-subnet"`
@@ -71,7 +73,6 @@ type printOpts struct {
 
 	EnablePodNodeSelector     bool `longflag:"enable-pod-node-selector"`
 	EnablePodSecurityPolicy   bool `longflag:"enable-pod-security-policy"`
-	EnablePodPresets          bool `longflag:"enable-pod-presets"`
 	EnableStaticAuditLog      bool `longflag:"enable-static-audit-log"`
 	EnableDynamicAuditLog     bool `longflag:"enable-dynamic-audit-log"`
 	EnableMetricsServer       bool `longflag:"enable-metrics-server"`
@@ -80,6 +81,9 @@ type printOpts struct {
 
 	DeployMachineController bool   `longflag:"deploy-machine-controller"`
 	ImageMachineController  string `longflag:"image-machine-controller"`
+
+	ContainerLogMaxSize  string `longflag:"container-log-max-size"`
+	ContainerLogMaxFiles int32  `longflag:"container-log-max-files"`
 }
 
 // configCmd setups the config command
@@ -142,7 +146,7 @@ func configPrintCmd() *cobra.Command {
 		longFlagName(opts, "CloudProviderName"),
 		shortFlagName(opts, "CloudProviderName"),
 		defaultCloudProviderName,
-		"cloud provider name (aws, digitalocean, gce, hetzner, packet, openstack, vsphere, none)")
+		"cloud provider name (aws, digitalocean, gce, hetzner, equinixmetal, openstack, vsphere, none)")
 
 	// Hosts
 	cmd.Flags().StringVar(&opts.ControlPlaneHosts, longFlagName(opts, "ControlPlaneHosts"), "", "control plane hosts in format of comma-separated key:value list, example: publicAddress:192.168.0.100,privateAddress:192.168.1.100,sshUsername:ubuntu,sshPort:22. Use quoted string of space separated values for multiple hosts")
@@ -150,6 +154,7 @@ func configPrintCmd() *cobra.Command {
 	// API endpoint
 	cmd.Flags().StringVar(&opts.APIEndpointHost, longFlagName(opts, "APIEndpointHost"), "", "API endpoint hostname or address")
 	cmd.Flags().IntVar(&opts.APIEndpointPort, longFlagName(opts, "APIEndpointPort"), 6443, "API endpoint port")
+	cmd.Flags().StringSliceVar(&opts.APIEndpointAlternativeNames, longFlagName(opts, "APIEndpointAlternativeNames"), []string{}, "Comma separated list of API endpoint alternative names, example: host.com,192.16.0.100")
 
 	// Cluster networking
 	cmd.Flags().StringVar(&opts.PodSubnet, longFlagName(opts, "PodSubnet"), "", "Subnet to be used for pods networking")
@@ -165,7 +170,6 @@ func configPrintCmd() *cobra.Command {
 	// Features
 	cmd.Flags().BoolVar(&opts.EnablePodNodeSelector, longFlagName(opts, "EnablePodNodeSelector"), false, "enable PodNodeSelector admission plugin")
 	cmd.Flags().BoolVar(&opts.EnablePodSecurityPolicy, longFlagName(opts, "EnablePodSecurityPolicy"), false, "enable PodSecurityPolicy")
-	cmd.Flags().BoolVar(&opts.EnablePodPresets, longFlagName(opts, "EnablePodPresets"), false, "enable PodPresets")
 	cmd.Flags().BoolVar(&opts.EnableStaticAuditLog, longFlagName(opts, "EnableStaticAuditLog"), false, "enable StaticAuditLog")
 	cmd.Flags().BoolVar(&opts.EnableDynamicAuditLog, longFlagName(opts, "EnableDynamicAuditLog"), false, "enable DynamicAuditLog")
 	cmd.Flags().BoolVar(&opts.EnableMetricsServer, longFlagName(opts, "EnableMetricsServer"), true, "enable metrics-server")
@@ -176,6 +180,19 @@ func configPrintCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.DeployMachineController, longFlagName(opts, "DeployMachineController"), true, "deploy kubermatic machine-controller")
 	cmd.Flags().StringVar(&opts.ImageMachineController, longFlagName(opts, "ImageMachineController"), "", "Do not overwrite image for machine controller")
 
+	// LoggingConfig
+	cmd.Flags().StringVar(
+		&opts.ContainerLogMaxSize,
+		longFlagName(opts, "ContainerLogMaxSize"),
+		containerruntime.DefaultContainerLogMaxSize,
+		"ContainerLogMaxSize")
+
+	cmd.Flags().Int32Var(
+		&opts.ContainerLogMaxFiles,
+		longFlagName(opts, "ContainerLogMaxFiles"),
+		containerruntime.DefaultContainerLogMaxFiles,
+		"ContainerLogMaxFiles")
+
 	return cmd
 }
 
@@ -185,8 +202,8 @@ func configMigrateCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 		Use:   "migrate",
 		Short: "Migrate the v1alpha1 KubeOneCluster manifest to the v1beta1 version",
 		Long: `
-Migrate the v1alpha1 KubeOneCluster manifest to the v1beta1 version.
-The v1alpha1 version of the KubeOneCluster manifest is deprecated and will be
+Migrate the v1beta1 KubeOneCluster manifest to the v1beta2 version.
+The v1beta1 version of the KubeOneCluster manifest is deprecated and will be
 removed in one of the next versions.
 The new manifest is printed on the standard output.
 `,
@@ -214,11 +231,11 @@ func configMachinedeploymentsCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 Print the manifest for creating MachineDeployment objects.
 
 The manifest contains all MachineDeployments defined in the API/config.
-Note that manifest may include already created MachineDeplyoments.
+Note that manifest may include already created MachineDeployments.
 The manifest is printed on the standard output.
 `,
 		Args:    cobra.ExactArgs(0),
-		Example: `kubeone config machinedeplyoments --manifest mycluster.yaml`,
+		Example: `kubeone config machinedeployments --manifest mycluster.yaml`,
 		RunE: func(_ *cobra.Command, args []string) error {
 			gopts, err := persistentGlobalOptions(rootFlags)
 			if err != nil {
@@ -236,7 +253,7 @@ The manifest is printed on the standard output.
 func runPrint(printOptions *printOpts) error {
 	if printOptions.FullConfig {
 		switch printOptions.CloudProviderName {
-		case "digitalocean", "packet", "hetzner":
+		case "digitalocean", "equinixmetal", "hetzner":
 			printOptions.CloudProviderExternal = true
 		case "openstack":
 			printOptions.CloudProviderCloudCfg = "<< cloudConfig is required for OpenStack >>"
@@ -280,7 +297,7 @@ func createAndPrintManifest(printOptions *printOpts) error {
 	cfg := &yamled.Document{}
 
 	// API data
-	cfg.Set(yamled.Path{"apiVersion"}, "kubeone.io/v1beta1")
+	cfg.Set(yamled.Path{"apiVersion"}, "kubeone.k8c.io/v1beta2")
 	cfg.Set(yamled.Path{"kind"}, "KubeOneCluster")
 
 	// Cluster name
@@ -310,8 +327,8 @@ func createAndPrintManifest(printOptions *printOpts) error {
 	case "openstack":
 		cfg.Set(yamled.Path{"cloudProvider", "openstack"}, providerVal)
 		cfg.Set(yamled.Path{"cloudProvider", "cloudConfig"}, "<< cloudConfig is required for OpenStack >>\n")
-	case "packet":
-		cfg.Set(yamled.Path{"cloudProvider", "packet"}, providerVal)
+	case "equinixmetal":
+		cfg.Set(yamled.Path{"cloudProvider", "equinixmetal"}, providerVal)
 		cfg.Set(yamled.Path{"cloudProvider", "external"}, true)
 	case "vsphere":
 		cfg.Set(yamled.Path{"cloudProvider", "vsphere"}, providerVal)
@@ -333,6 +350,10 @@ func createAndPrintManifest(printOptions *printOpts) error {
 	}
 	if printOptions.APIEndpointPort != 0 {
 		cfg.Set(yamled.Path{"apiEndpoint", "port"}, printOptions.APIEndpointPort)
+	}
+
+	if len(printOptions.APIEndpointAlternativeNames) > 0 {
+		cfg.Set(yamled.Path{"apiEndpoint", "alternativeNames"}, printOptions.APIEndpointAlternativeNames)
 	}
 
 	// Cluster networking
@@ -368,6 +389,10 @@ func createAndPrintManifest(printOptions *printOpts) error {
 		cfg.Set(yamled.Path{"machineController", "deploy"}, printOptions.DeployMachineController)
 	}
 
+	// Logging configuration
+	cfg.Set(yamled.Path{"loggingConfig", "containerLogMaxSize"}, printOptions.ContainerLogMaxSize)
+	cfg.Set(yamled.Path{"loggingConfig", "containerLogMaxFiles"}, printOptions.ContainerLogMaxFiles)
+
 	// Print the manifest
 	err := validateAndPrintConfig(cfg)
 	if err != nil {
@@ -384,9 +409,6 @@ func printFeatures(cfg *yamled.Document, printOptions *printOpts) {
 	}
 	if printOptions.EnablePodSecurityPolicy {
 		cfg.Set(yamled.Path{"features", "podSecurityPolicy", "enable"}, printOptions.EnablePodSecurityPolicy)
-	}
-	if printOptions.EnablePodPresets {
-		cfg.Set(yamled.Path{"features", "podPresets", "enable"}, printOptions.EnablePodPresets)
 	}
 	if printOptions.EnableDynamicAuditLog {
 		cfg.Set(yamled.Path{"features", "dynamicAuditLog", "enable"}, printOptions.EnableDynamicAuditLog)
@@ -439,6 +461,7 @@ func parseControlPlaneHosts(cfg *yamled.Document, hostList string) error {
 					return errors.Wrap(err, "unable to convert ssh port to integer")
 				}
 				h[val[0]] = portInt
+
 				continue
 			}
 			h[val[0]] = val[1]
@@ -507,7 +530,7 @@ func validateAndPrintConfig(cfgYaml interface{}) error {
 }
 
 const exampleManifest = `
-apiVersion: kubeone.io/v1beta1
+apiVersion: kubeone.k8c.io/v1beta2
 kind: KubeOneCluster
 name: {{ .ClusterName }}
 
@@ -525,6 +548,8 @@ clusterNetwork:
   nodePortRange: "{{ .NodePortRange }}"
   # kube-proxy configurations
   kubeProxy:
+    # skipInstallation will skip the installation of kube-proxy
+    # skipInstallation: true
     # if this set, kube-proxy mode will be set to ipvs
     ipvs:
       # different schedulers can be configured:
@@ -548,6 +573,7 @@ clusterNetwork:
     # Supported CNI plugins:
     # * canal
     # * weave-net
+    # * cilium
     # * external - The CNI plugin can be installed as an addon or manually
     canal:
       # MTU represents the maximum transmission unit.
@@ -558,6 +584,12 @@ clusterNetwork:
       # * OpenStack - 1400 (OpenStack specific 1450 bytes - 50 VXLAN bytes)
       # * Default - 1450
       mtu: 1450
+    # cilium:
+    #   # enableHubble to deploy Hubble relay and UI
+    #   enableHubble: true
+    #   # kubeProxyReplacement defines weather cilium relies on underlying Kernel support to replace kube-proxy functionality by eBPF (strict),
+    #   # or disables a subset of those features so cilium does not bail out if the kernel support is missing (disabled).
+    #   kubeProxyReplacement: "disabled"
     # weaveNet:
     #   # When true is set, secret will be automatically generated and
     #   # referenced in appropriate manifests. Currently only weave-net
@@ -575,7 +607,7 @@ cloudProvider:
   # hetzner:
   #   networkID: ""
   # openstack: {}
-  # packet: {}
+  # equinixmetal: {}
   # vsphere: {}
   # none: {}
   {{ .CloudProviderName }}: {}
@@ -597,15 +629,33 @@ cloudProvider:
 # Only one container runtime can be present at the time.
 #
 # Note: Kubernetes has announced deprecation of Docker (dockershim) support.
-# It's expected that the Docker support will be removed in Kubernetes 1.22.
+# It's expected that the Docker support will be removed in Kubernetes 1.24.
 # It's highly advised to use containerd for all newly created clusters.
 containerRuntime:
   # Installs containerd container runtime.
   # Default for 1.21+ Kubernetes clusters.
-  # containerd: {}
+  # containerd:
+  #   registries:
+  #     k8s.gcr.io:
+  #       mirrors:
+  #       - https://self-signed.pull-through.cache.tld
+  #       tlsConfig:
+  #         insecureSkipVerify: true
+  #     docker.io:
+  #       mirrors:
+  #       - http://plain-text2.tld
+  #       auth:
+  #         # all of the following fields are optional
+  #         username: "u5er"
+  #         password: "myc00lp455w0rd"
+  #         auth: "base64(user:password)"
+  #         identityToken: ""
+  #     "*":
+  #       mirrors:
+  #       - https://secure.tld
   # Installs Docker container runtime.
   # Default for Kubernetes clusters up to 1.20.
-  # This option will be removed once Kubernetes 1.21 reaches EOL.
+  # This option will be removed once Kubernetes 1.23 reaches EOL.
   # docker: {}
 
 features:
@@ -624,14 +674,6 @@ features:
   # 'kube-system' namespace pods to 'use' it.
   podSecurityPolicy:
     enable: {{ .EnablePodSecurityPolicy }}
-  # Enables PodPresets admission plugin in API server.
-  # The PodPresets feature has been removed in Kubernetes 1.20.
-  # This feature is deprecated and will be removed from the API once
-  # Kubernetes 1.19 reaches EOL.
-  # Provisioning a Kubernetes 1.20 cluster or upgrading an existing cluster to
-  # the Kubernetes 1.20 requires this feature to be disabled.
-  podPresets:
-    enable: {{ .EnablePodPresets }}
   # Enables and configures audit log backend.
   # More info: https://kubernetes.io/docs/tasks/debug-application-cluster/audit/#log-backend
   staticAuditLog:
@@ -811,8 +853,8 @@ addons:
   enable: false
   # In case when the relative path is provided, the path is relative
   # to the KubeOne configuration file.
-  # This path must be always provided and the directory must exist, even if
-  # using only embedded addons.
+  # This path is required only if you want to provide custom addons or override
+  # embedded addons.
   path: "./addons"
   # globalParams is a key-value map of values passed to the addons templating engine,
   # to be used in the addons' manifests. The values defined here are passed to all
@@ -890,6 +932,7 @@ addons:
 # apiEndpoint:
 #   host: '{{ .APIEndpointHost }}'
 #   port: {{ .APIEndpointPort }}
+#   alternativeNames: {{ .APIEndpointAlternativeNames }}
 
 # If the cluster runs on bare metal or an unsupported cloud provider,
 # you can disable the machine-controller deployment entirely. In this
@@ -964,4 +1007,8 @@ machineController:
 #     operatingSystem: 'ubuntu'
 #     operatingSystemSpec:
 #       distUpgradeOnBoot: true
+
+loggingConfig:
+  containerLogMaxSize: "{{ .ContainerLogMaxSize }}"
+  containerLogMaxFiles: {{ .ContainerLogMaxFiles }}
 `

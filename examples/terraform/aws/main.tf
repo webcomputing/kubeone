@@ -56,6 +56,11 @@ data "aws_ami" "ami" {
     name   = "virtualization-type"
     values = ["hvm"]
   }
+
+  filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
 }
 
 data "aws_vpc" "selected" {
@@ -271,7 +276,7 @@ resource "aws_iam_role_policy" "policy" {
 ############################ CONTROL PLANE INSTANCES ###########################
 
 resource "aws_instance" "control_plane" {
-  count                  = 3
+  count                  = var.control_plane_vm_count
   instance_type          = var.control_plane_type
   iam_instance_profile   = aws_iam_instance_profile.profile.name
   ami                    = local.ami

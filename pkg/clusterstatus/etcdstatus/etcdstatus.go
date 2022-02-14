@@ -17,9 +17,10 @@ limitations under the License.
 package etcdstatus
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -63,6 +64,7 @@ func MemberList(s *state.State) (*clientv3.MemberListResponse, error) {
 	defer etcdcli.Close()
 
 	etcdRing, err := etcdcli.MemberList(s.Context)
+
 	return etcdRing, errors.Wrap(err, "failed etcd/clientv3.MemberList")
 }
 
@@ -84,7 +86,7 @@ func Get(s *state.State, node kubeoneapi.HostConfig, etcdRing *clientv3.MemberLi
 	}
 
 	// Check etcd member health
-	health, err := memberHealth(roundTripper, node.PrivateAddress)
+	health, err := memberHealth(s.Context, roundTripper, node.PrivateAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +98,7 @@ func Get(s *state.State, node kubeoneapi.HostConfig, etcdRing *clientv3.MemberLi
 	for _, mem := range etcdRing.Members {
 		if mem.Name == node.Hostname {
 			status.Member = true
+
 			break
 		}
 	}
@@ -104,10 +107,10 @@ func Get(s *state.State, node kubeoneapi.HostConfig, etcdRing *clientv3.MemberLi
 }
 
 // memberHealth returns health for a requested etcd member
-func memberHealth(t http.RoundTripper, nodeAddress string) (bool, error) {
+func memberHealth(ctx context.Context, t http.RoundTripper, nodeAddress string) (bool, error) {
 	endpoint := fmt.Sprintf(healthEndpointFmt, nodeAddress)
 
-	request, err := http.NewRequest("GET", endpoint, nil)
+	request, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return false, err
 	}
@@ -121,7 +124,7 @@ func memberHealth(t http.RoundTripper, nodeAddress string) (bool, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return false, err
 	}

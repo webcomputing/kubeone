@@ -32,7 +32,9 @@ import (
 	"k8c.io/kubeone/pkg/ssh"
 	"k8c.io/kubeone/pkg/state"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -44,11 +46,30 @@ const (
 	systemdShowExecStartCMD = `systemctl show %s -p ExecStart`
 
 	kubeletInitializedCMD = `test -f /etc/kubernetes/kubelet.conf`
+
+	k8sAppLabel               = "k8s-app"
+	openstackCCMAppLabelValue = "openstack-cloud-controller-manager"
 )
+
+var KubeProxyObjectKey = dynclient.ObjectKey{
+	Namespace: "kube-system",
+	Name:      "kube-proxy",
+}
 
 func safeguard(s *state.State) error {
 	if !s.LiveCluster.IsProvisioned() {
 		return nil
+	}
+
+	if s.Cluster.ClusterNetwork.KubeProxy != nil && s.Cluster.ClusterNetwork.KubeProxy.SkipInstallation {
+		var kubeProxyDs appsv1.DaemonSet
+		if err := s.DynamicClient.Get(s.Context, KubeProxyObjectKey, &kubeProxyDs); err != nil {
+			if !k8serrors.IsNotFound(err) {
+				return err
+			}
+		} else {
+			return errors.New(".clusterNetwork.kubeProxy.skipInstallation is enabled, but kube-proxy was already installed and requires manual deletion")
+		}
 	}
 
 	var nodes corev1.NodeList
@@ -69,12 +90,14 @@ func safeguard(s *state.State) error {
 
 		if nodesContainerRuntime != configuredClusterContainerRuntime {
 			errMsg := "Migration is not supported yet"
-			if cr.Containerd != nil {
+			if nodesContainerRuntime == "docker" {
+				errMsg = "Support for docker will be removed with Kubernetes 1.24 release. It is recommended to switch to containerd as container runtime using `kubeone migrate to-containerd`. To continue using Docker please specify ContainerRuntime explicitly in KubeOneCluster manifest"
+			} else if cr.Containerd != nil {
 				errMsg = "Use `kubeone migrate to-containerd`"
 			}
 
 			return errors.Errorf(
-				"Container runtime on node %q is %q, but %q is configured. %s.",
+				"container runtime on node %q is %q, but %q is configured. %s",
 				node.Name,
 				nodesContainerRuntime,
 				configuredClusterContainerRuntime,
@@ -138,6 +161,14 @@ func runProbes(s *state.State) error {
 		}
 	}
 
+	clusterName, cnErr := detectClusterName(s)
+	if cnErr != nil {
+		return errors.Wrap(cnErr, "failed to detect the ccm --cluster-name flag value")
+	}
+	s.LiveCluster.Lock.Lock()
+	s.LiveCluster.CCMClusterName = clusterName
+	s.LiveCluster.Lock.Unlock()
+
 	switch {
 	case s.Cluster.ContainerRuntime.Containerd != nil:
 		return nil
@@ -145,10 +176,10 @@ func runProbes(s *state.State) error {
 		return nil
 	}
 
-	gteKube121Condition, _ := semver.NewConstraint(">= 1.21")
+	gteKube124Condition, _ := semver.NewConstraint(">= 1.24")
 
 	switch {
-	case gteKube121Condition.Check(s.LiveCluster.ExpectedVersion):
+	case gteKube124Condition.Check(s.LiveCluster.ExpectedVersion):
 		s.Cluster.ContainerRuntime.Containerd = &kubeoneapi.ContainerRuntimeContainerd{}
 
 		if s.LiveCluster.IsProvisioned() {
@@ -188,6 +219,7 @@ func investigateHost(s *state.State, node *kubeoneapi.HostConfig, conn ssh.Conne
 			foundHost = &host
 			idx = i
 			controlPlane = true
+
 			break
 		}
 	}
@@ -197,6 +229,7 @@ func investigateHost(s *state.State, node *kubeoneapi.HostConfig, conn ssh.Conne
 			if host.Config.Hostname == node.Hostname {
 				foundHost = &host
 				idx = i
+
 				break
 			}
 		}
@@ -249,6 +282,7 @@ func investigateHost(s *state.State, node *kubeoneapi.HostConfig, conn ssh.Conne
 		s.LiveCluster.StaticWorkers[idx] = *foundHost
 	}
 	s.LiveCluster.Lock.Unlock()
+
 	return nil
 }
 
@@ -279,6 +313,7 @@ func investigateCluster(s *state.State) error {
 		s.Logger.Errorln("Failed to elect leader.")
 		s.Logger.Errorln("Quorum is mostly like lost, manual cluster repair might be needed.")
 		s.Logger.Errorln("Consider the KubeOne documentation for further steps.")
+
 		return errors.New("leader not elected, quorum mostly like lost")
 	}
 
@@ -330,6 +365,7 @@ func investigateCluster(s *state.State) error {
 				if node.Name == s.LiveCluster.ControlPlane[i].Config.Hostname {
 					s.LiveCluster.ControlPlane[i].IsInCluster = true
 					found = true
+
 					break
 				}
 			}
@@ -339,6 +375,7 @@ func investigateCluster(s *state.State) error {
 			for i := range s.LiveCluster.StaticWorkers {
 				if node.Name == s.LiveCluster.StaticWorkers[i].Config.Hostname {
 					s.LiveCluster.StaticWorkers[i].IsInCluster = true
+
 					break
 				}
 			}
@@ -539,6 +576,7 @@ func detectEncryptionProvidersEnabled(s *state.State) (ees encryptionEnabledStat
 			}
 		}
 	}
+
 	return ees, nil
 }
 
@@ -572,24 +610,33 @@ func detectCCMMigrationStatus(s *state.State) (*state.CCMStatus, error) {
 					status.CSIMigrationEnabled = true
 				}
 				unregister := s.Cluster.InTreePluginUnregisterFeatureGate()
-				if unregister != "" && strings.Contains(c, fmt.Sprintf("%s=true", unregister)) {
+
+				foundUnregister := 0
+				for _, u := range unregister {
+					if strings.Contains(c, fmt.Sprintf("%s=true", u)) {
+						foundUnregister++
+					}
+				}
+				if len(unregister) > 0 && foundUnregister == len(unregister) {
 					status.InTreeCloudProviderUnregistered = true
 				}
 			}
 		}
 	}
 
-	ccmLabel := ""
-	ccmLabelValue := ""
+	ccmLabel := k8sAppLabel
+	var ccmLabelValue string
+
 	switch {
+	case s.Cluster.CloudProvider.Azure != nil:
+		ccmLabelValue = "azure-cloud-controller-manager"
 	case s.Cluster.CloudProvider.Openstack != nil:
-		ccmLabel = "k8s-app"
-		ccmLabelValue = "openstack-cloud-controller-manager"
+		ccmLabelValue = openstackCCMAppLabelValue
 	case s.Cluster.CloudProvider.Vsphere != nil:
-		ccmLabel = "k8s-app"
 		ccmLabelValue = "vsphere-cloud-controller-manager"
 	default:
 		status.ExternalCCMDeployed = false
+
 		return status, nil
 	}
 
@@ -608,4 +655,75 @@ func detectCCMMigrationStatus(s *state.State) (*state.CCMStatus, error) {
 	}
 
 	return status, nil
+}
+
+// detectClusterName is used to detect the value that should be passed to the
+// external CCM via the --cluster-name flag.
+//
+// This function is currently used for OpenStack clusters, because we initially
+// didn't set this flag, in which case it defaults to `kubernetes`.
+//
+// Not setting the flag can cause issues if there are multiple clusters in the
+// same tenant. For example, Load Balancers with the same name in different
+// clusters will share the same Octavia LB.
+//
+// Changing the --cluster-name causes the CCM to lose all references to the
+// Load Balancers on OpenStack, because the cluster name is used as part of
+// the reference to the LB. Therefore, we need this function to ensure the
+// backwards compatibility.
+//
+// The function works in the following way:
+//   * if the cluster is not provisioned, or if the cluster is not an OpenStack
+//     cluster, return the KubeOne cluster name
+//   * if it's an existing OpenStack cluster:
+//      * if cluster is running in-tree cloud provider: return the KubeOne
+//        cluster name because the in-tree provider already has the
+//        --cluster-name flag set
+//      * if cluster is running external cloud provider: check if there is
+//        `--cluster-name` flag on the OpenStack CCM. If there is, read the
+//        value and return it, otherwise don't set the OpenStack cluster name,
+//        in which case it defaults to `kubernetes`
+//   * if cluster is migrated to external CCM, return the KubeOne cluster name
+//
+// If an operator wants to change the --cluster-name flag on OpenStack external
+// CCM, they need to edit the CCM DaemonSet manually. KubeOne will
+// automatically pick up the provided value when reconciling the cluster.
+func detectClusterName(s *state.State) (string, error) {
+	if !s.LiveCluster.IsProvisioned() ||
+		s.LiveCluster.CCMStatus == nil ||
+		s.Cluster.CloudProvider.Openstack == nil {
+		return s.Cluster.Name, nil
+	}
+
+	if s.LiveCluster.CCMStatus.InTreeCloudProviderEnabled && !s.LiveCluster.CCMStatus.ExternalCCMDeployed {
+		return s.Cluster.Name, nil
+	}
+
+	pods := corev1.PodList{}
+	err := s.DynamicClient.List(s.Context, &pods, &dynclient.ListOptions{
+		Namespace: metav1.NamespaceSystem,
+		LabelSelector: labels.SelectorFromSet(map[string]string{
+			k8sAppLabel: openstackCCMAppLabelValue,
+		}),
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(pods.Items) == 0 || len(pods.Items[0].Spec.Containers) == 0 {
+		return "", errors.New("unable to detect ccm pod/container")
+	}
+	for _, container := range pods.Items[0].Spec.Containers {
+		if container.Name != openstackCCMAppLabelValue {
+			continue
+		}
+		for _, flag := range container.Command {
+			if strings.HasPrefix(flag, "--cluster-name") {
+				return strings.Split(flag, "=")[1], nil
+			}
+		}
+	}
+
+	// If we got here, the cluster is running external CCM, but we didn't
+	// find the --cluster-name flag, therefore assume default value.
+	return "", nil
 }

@@ -18,7 +18,8 @@ output "kubeone_api" {
   description = "kube-apiserver LB endpoint"
 
   value = {
-    endpoint = aws_elb.control_plane.dns_name
+    endpoint                    = aws_elb.control_plane.dns_name
+    apiserver_alternative_names = var.apiserver_alternative_names
   }
 }
 
@@ -35,6 +36,7 @@ output "kubeone_hosts" {
       cloud_provider       = "aws"
       private_address      = aws_instance.control_plane.*.private_ip
       hostnames            = aws_instance.control_plane.*.private_dns
+      operating_system     = var.os
       ssh_agent_socket     = var.ssh_agent_socket
       ssh_port             = var.ssh_port
       ssh_private_key_file = var.ssh_private_key_file
@@ -53,6 +55,7 @@ output "kubeone_static_workers" {
     workers1 = {
       private_address      = aws_instance.static_workers1.*.private_ip
       hostnames            = aws_instance.static_workers1.*.private_dns
+      operating_system     = var.os
       ssh_agent_socket     = var.ssh_agent_socket
       ssh_port             = var.ssh_port
       ssh_private_key_file = var.ssh_private_key_file
@@ -73,14 +76,25 @@ output "kubeone_workers" {
     "${var.cluster_name}-${local.zoneA}" = {
       replicas = var.initial_machinedeployment_replicas
       providerSpec = {
+        annotations = {
+          "k8c.io/operating-system-profile" = var.ami_filters[var.os].osp_name
+        }
         sshPublicKeys   = local.worker_deploy_ssh_key
         operatingSystem = local.worker_os
         operatingSystemSpec = {
-          distUpgradeOnBoot = false
+          distUpgradeOnBoot   = false
+          provisioningUtility = "cloud-init"
         }
         labels = {
           isSpotInstance = format("%t", var.initial_machinedeployment_spotinstances)
         }
+        # uncomment to following to set those kubelet parameters. More into at:
+        # https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
+        # machineAnnotations = {
+        #  "v1.kubelet-config.machine-controller.kubermatic.io/SystemReserved" = "cpu=200m,memory=200Mi"
+        #  "v1.kubelet-config.machine-controller.kubermatic.io/KubeReserved"   = "cpu=200m,memory=300Mi"
+        #  "v1.kubelet-config.machine-controller.kubermatic.io/EvictionHard"   = ""
+        # }
         cloudProviderSpec = {
           # provider specific fields:
           # see example under `cloudProviderSpec` section at:
@@ -110,10 +124,14 @@ output "kubeone_workers" {
     "${var.cluster_name}-${local.zoneB}" = {
       replicas = var.initial_machinedeployment_replicas
       providerSpec = {
+        annotations = {
+          "k8c.io/operating-system-profile" = var.ami_filters[var.os].osp_name
+        }
         sshPublicKeys   = local.worker_deploy_ssh_key
         operatingSystem = local.worker_os
         operatingSystemSpec = {
-          distUpgradeOnBoot = false
+          distUpgradeOnBoot   = false
+          provisioningUtility = "cloud-init"
         }
         labels = {
           isSpotInstance = format("%t", var.initial_machinedeployment_spotinstances)
@@ -147,10 +165,14 @@ output "kubeone_workers" {
     "${var.cluster_name}-${local.zoneC}" = {
       replicas = var.initial_machinedeployment_replicas
       providerSpec = {
+        annotations = {
+          "k8c.io/operating-system-profile" = var.ami_filters[var.os].osp_name
+        }
         sshPublicKeys   = local.worker_deploy_ssh_key
         operatingSystem = local.worker_os
         operatingSystemSpec = {
-          distUpgradeOnBoot = false
+          distUpgradeOnBoot   = false
+          provisioningUtility = "cloud-init"
         }
         labels = {
           isSpotInstance = format("%t", var.initial_machinedeployment_spotinstances)

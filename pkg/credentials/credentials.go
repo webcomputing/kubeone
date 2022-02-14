@@ -18,7 +18,6 @@ package credentials
 
 import (
 	"encoding/base64"
-	"io/ioutil"
 	"os"
 	"strings"
 
@@ -26,33 +25,58 @@ import (
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
 
-	"k8c.io/kubeone/pkg/apis/kubeone"
+	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
+)
+
+// Type is a type of credentials that should be fetched
+type Type string
+
+const (
+	TypeUniversal Type = ""
+	TypeCCM       Type = "CCM"
+	TypeMC        Type = "MC"
+	TypeOSM       Type = "OSM"
 )
 
 // The environment variable names with credential in them
 const (
 	// Variables that KubeOne (and Terraform) expect to see
-	AWSAccessKeyID          = "AWS_ACCESS_KEY_ID"
-	AWSSecretAccessKey      = "AWS_SECRET_ACCESS_KEY" //nolint:gosec
-	AzureClientID           = "ARM_CLIENT_ID"
-	AzureClientSecret       = "ARM_CLIENT_SECRET" //nolint:gosec
-	AzureTenantID           = "ARM_TENANT_ID"
-	AzureSubscribtionID     = "ARM_SUBSCRIPTION_ID"
-	DigitalOceanTokenKey    = "DIGITALOCEAN_TOKEN"
-	GoogleServiceAccountKey = "GOOGLE_CREDENTIALS"
-	HetznerTokenKey         = "HCLOUD_TOKEN"
-	OpenStackAuthURL        = "OS_AUTH_URL"
-	OpenStackDomainName     = "OS_DOMAIN_NAME"
-	OpenStackPassword       = "OS_PASSWORD"
-	OpenStackRegionName     = "OS_REGION_NAME"
-	OpenStackTenantID       = "OS_TENANT_ID"
-	OpenStackTenantName     = "OS_TENANT_NAME"
-	OpenStackUserName       = "OS_USERNAME"
-	PacketAPIKey            = "PACKET_AUTH_TOKEN"
-	PacketProjectID         = "PACKET_PROJECT_ID"
-	VSphereAddress          = "VSPHERE_SERVER"
-	VSpherePassword         = "VSPHERE_PASSWORD"
-	VSphereUsername         = "VSPHERE_USER"
+	AWSAccessKeyID                       = "AWS_ACCESS_KEY_ID"
+	AWSSecretAccessKey                   = "AWS_SECRET_ACCESS_KEY" //nolint:gosec
+	AzureClientID                        = "ARM_CLIENT_ID"
+	AzureClientSecret                    = "ARM_CLIENT_SECRET" //nolint:gosec
+	AzureTenantID                        = "ARM_TENANT_ID"
+	AzureSubscribtionID                  = "ARM_SUBSCRIPTION_ID"
+	DigitalOceanTokenKey                 = "DIGITALOCEAN_TOKEN"
+	GoogleServiceAccountKey              = "GOOGLE_CREDENTIALS"
+	HetznerTokenKey                      = "HCLOUD_TOKEN"
+	NutanixEndpoint                      = "NUTANIX_ENDPOINT"
+	NutanixPort                          = "NUTANIX_PORT"
+	NutanixUsername                      = "NUTANIX_USERNAME"
+	NutanixPassword                      = "NUTANIX_PASSWORD"
+	NutanixInsecure                      = "NUTANIX_INSECURE"
+	NutanixProxyURL                      = "NUTANIX_PROXY_URL"
+	NutanixClusterName                   = "NUTANIX_CLUSTER_NAME"
+	NutanixPEEndpoint                    = "NUTANIX_PE_ENDPOINT"
+	NutanixPEUsername                    = "NUTANIX_PE_USERNAME"
+	NutanixPEPassword                    = "NUTANIX_PE_PASSWORD" //nolint:gosec
+	OpenStackAuthURL                     = "OS_AUTH_URL"
+	OpenStackDomainName                  = "OS_DOMAIN_NAME"
+	OpenStackPassword                    = "OS_PASSWORD"
+	OpenStackRegionName                  = "OS_REGION_NAME"
+	OpenStackTenantID                    = "OS_TENANT_ID"
+	OpenStackTenantName                  = "OS_TENANT_NAME"
+	OpenStackUserName                    = "OS_USERNAME"
+	OpenStackApplicationCredentialID     = "OS_APPLICATION_CREDENTIAL_ID"
+	OpenStackApplicationCredentialSecret = "OS_APPLICATION_CREDENTIAL_SECRET"
+	EquinixMetalAuthToken                = "METAL_AUTH_TOKEN" //nolint:gosec
+	EquinixMetalProjectID                = "METAL_PROJECT_ID"
+	// TODO: Remove Packet env vars after deprecation period.
+	PacketAPIKey    = "PACKET_API_KEY"    //nolint:gosec
+	PacketProjectID = "PACKET_PROJECT_ID" //nolint:gosec
+	VSphereAddress  = "VSPHERE_SERVER"
+	VSpherePassword = "VSPHERE_PASSWORD"
+	VSphereUsername = "VSPHERE_USER"
 
 	// Variables that machine-controller expects
 	AzureClientIDMC           = "AZURE_CLIENT_ID"
@@ -63,7 +87,6 @@ const (
 	GoogleServiceAccountKeyMC = "GOOGLE_SERVICE_ACCOUNT"
 	HetznerTokenKeyMC         = "HZ_TOKEN"
 	OpenStackUserNameMC       = "OS_USER_NAME"
-	PacketAPIKeyMC            = "PACKET_API_KEY"
 	VSphereAddressMC          = "VSPHERE_ADDRESS"
 	VSphereUsernameMC         = "VSPHERE_USERNAME"
 )
@@ -79,6 +102,16 @@ var (
 		DigitalOceanTokenKey,
 		GoogleServiceAccountKey,
 		HetznerTokenKey,
+		NutanixEndpoint,
+		NutanixPort,
+		NutanixUsername,
+		NutanixPassword,
+		NutanixInsecure,
+		NutanixProxyURL,
+		NutanixClusterName,
+		NutanixPEEndpoint,
+		NutanixPEUsername,
+		NutanixPEPassword,
 		OpenStackAuthURL,
 		OpenStackDomainName,
 		OpenStackPassword,
@@ -86,6 +119,8 @@ var (
 		OpenStackTenantID,
 		OpenStackTenantName,
 		OpenStackUserName,
+		EquinixMetalAuthToken,
+		EquinixMetalProjectID,
 		PacketAPIKey,
 		PacketProjectID,
 		VSphereAddress,
@@ -102,7 +137,7 @@ type ProviderEnvironmentVariable struct {
 }
 
 func Any(credentialsFilePath string) (map[string]string, error) {
-	credentialsFinder, err := newCredsFinder(credentialsFilePath)
+	credentialsFinder, err := newCredsFinder(credentialsFilePath, TypeUniversal)
 	if err != nil {
 		return nil, err
 	}
@@ -112,6 +147,15 @@ func Any(credentialsFilePath string) (map[string]string, error) {
 	for _, key := range allKeys {
 		if val := credentialsFinder(key); val != "" {
 			creds[key] = val
+			// NB: We want to use Equinix Metal env vars everywhere, even if
+			// users has PACKET_ env vars on their systems.
+			// TODO: Remove after deprecation period.
+			switch key {
+			case PacketAPIKey:
+				creds[EquinixMetalAuthToken] = val
+			case PacketProjectID:
+				creds[EquinixMetalProjectID] = val
+			}
 		}
 	}
 
@@ -119,8 +163,8 @@ func Any(credentialsFilePath string) (map[string]string, error) {
 }
 
 // ProviderCredentials implements fetching credentials for each supported provider
-func ProviderCredentials(cloudProvider kubeone.CloudProviderSpec, credentialsFilePath string) (map[string]string, error) {
-	credentialsFinder, err := newCredsFinder(credentialsFilePath)
+func ProviderCredentials(cloudProvider kubeoneapi.CloudProviderSpec, credentialsFilePath string, credentialsType Type) (map[string]string, error) {
+	credentialsFinder, err := newCredsFinder(credentialsFilePath, credentialsType)
 	if err != nil {
 		return nil, err
 	}
@@ -149,26 +193,39 @@ func ProviderCredentials(cloudProvider kubeone.CloudProviderSpec, credentialsFil
 		// encode it before sending to secret to be consumed by
 		// machine-controller, as machine-controller assumes it will be double encoded
 		gsa[GoogleServiceAccountKeyMC] = base64.StdEncoding.EncodeToString([]byte(gsa[GoogleServiceAccountKeyMC]))
+
 		return gsa, nil
 	case cloudProvider.Hetzner != nil:
 		return credentialsFinder.parseCredentialVariables([]ProviderEnvironmentVariable{
 			{Name: HetznerTokenKey, MachineControllerName: HetznerTokenKeyMC},
 		}, defaultValidationFunc)
+	case cloudProvider.Nutanix != nil:
+		return credentialsFinder.parseCredentialVariables([]ProviderEnvironmentVariable{
+			{Name: NutanixEndpoint},
+			{Name: NutanixPort},
+			{Name: NutanixUsername},
+			{Name: NutanixPassword},
+			{Name: NutanixInsecure},
+			{Name: NutanixProxyURL},
+			{Name: NutanixClusterName},
+			{Name: NutanixPEEndpoint},
+			{Name: NutanixPEUsername},
+			{Name: NutanixPEPassword},
+		}, nutanixValidationFunc)
 	case cloudProvider.Openstack != nil:
 		return credentialsFinder.parseCredentialVariables([]ProviderEnvironmentVariable{
 			{Name: OpenStackAuthURL},
 			{Name: OpenStackUserName, MachineControllerName: OpenStackUserNameMC},
 			{Name: OpenStackPassword},
+			{Name: OpenStackApplicationCredentialID},
+			{Name: OpenStackApplicationCredentialSecret},
 			{Name: OpenStackDomainName},
 			{Name: OpenStackRegionName},
 			{Name: OpenStackTenantID},
 			{Name: OpenStackTenantName},
 		}, openstackValidationFunc)
-	case cloudProvider.Packet != nil:
-		return credentialsFinder.parseCredentialVariables([]ProviderEnvironmentVariable{
-			{Name: PacketAPIKey, MachineControllerName: PacketAPIKeyMC},
-			{Name: PacketProjectID},
-		}, defaultValidationFunc)
+	case cloudProvider.EquinixMetal != nil:
+		return credentialsFinder.equinixmetal()
 	case cloudProvider.Vsphere != nil:
 		vscreds, err := credentialsFinder.parseCredentialVariables([]ProviderEnvironmentVariable{
 			{Name: VSphereAddress, MachineControllerName: VSphereAddressMC},
@@ -180,6 +237,7 @@ func ProviderCredentials(cloudProvider kubeone.CloudProviderSpec, credentialsFil
 		}
 		// force scheme, as machine-controller requires it while terraform does not
 		vscreds[VSphereAddressMC] = "https://" + vscreds[VSphereAddressMC]
+
 		return vscreds, nil
 	case cloudProvider.None != nil:
 		return map[string]string{}, nil
@@ -188,20 +246,34 @@ func ProviderCredentials(cloudProvider kubeone.CloudProviderSpec, credentialsFil
 	return nil, errors.New("no provider matched")
 }
 
-func newCredsFinder(credentialsFilePath string) (lookupFunc, error) {
+func newCredsFinder(credentialsFilePath string, credentialsType Type) (lookupFunc, error) {
 	staticMap := map[string]string{}
 	finder := func(name string) string {
-		if val := os.Getenv(name); val != "" {
-			return val
+		switch {
+		case credentialsType != TypeUniversal:
+			typedName := string(credentialsType) + "_" + name
+			if val := os.Getenv(typedName); val != "" {
+				return val
+			}
+			if val, ok := staticMap[typedName]; ok && val != "" {
+				return val
+			}
+
+			fallthrough
+		default:
+			if val := os.Getenv(name); val != "" {
+				return val
+			}
+
+			return staticMap[name]
 		}
-		return staticMap[name]
 	}
 
 	if credentialsFilePath == "" {
 		return finder, nil
 	}
 
-	buf, err := ioutil.ReadFile(credentialsFilePath)
+	buf, err := os.ReadFile(credentialsFilePath)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to load credentials file")
 	}
@@ -224,6 +296,7 @@ func (lookup lookupFunc) aws() (map[string]string, error) {
 	if accessKeyID != "" && secretAccessKey != "" {
 		creds[AWSAccessKeyID] = accessKeyID
 		creds[AWSSecretAccessKey] = secretAccessKey
+
 		return creds, nil
 	}
 
@@ -246,6 +319,39 @@ func (lookup lookupFunc) aws() (map[string]string, error) {
 	// safe to assume credentials were found
 	creds[AWSAccessKeyID] = configCreds.AccessKeyID
 	creds[AWSSecretAccessKey] = configCreds.SecretAccessKey
+
+	return creds, nil
+}
+
+func (lookup lookupFunc) equinixmetal() (map[string]string, error) {
+	creds := make(map[string]string)
+	packetAPIKey := lookup(PacketAPIKey)
+	packetProjectID := lookup(PacketProjectID)
+	metalAuthToken := lookup(EquinixMetalAuthToken)
+	metalProjectID := lookup(EquinixMetalProjectID)
+
+	if packetAPIKey != "" && packetProjectID != "" && metalAuthToken != "" && metalProjectID != "" {
+		return nil, errors.New("found both PACKET_ and METAL_ environment variables, but only one can be used")
+	}
+	if (packetAPIKey != "" && packetProjectID == "") || (packetAPIKey == "" && packetProjectID != "") {
+		return nil, errors.New("both PACKET_API_KEY and PACKET_PROJECT_ID environment variables are required, but found only one")
+	}
+	if (metalAuthToken != "" && metalProjectID == "") || (metalAuthToken == "" && metalProjectID != "") {
+		return nil, errors.New("both METAL_AUTH_TOKEN and METAL_PROJECT_ID environment variables are required, but found only one")
+	}
+	if packetAPIKey == "" && packetProjectID == "" && metalAuthToken == "" && metalProjectID == "" {
+		return nil, errors.New("METAL_AUTH_TOKEN and METAL_PROJECT_ID environment variables are required")
+	}
+
+	if packetAPIKey != "" && packetProjectID != "" {
+		creds[EquinixMetalAuthToken] = packetAPIKey
+		creds[EquinixMetalProjectID] = packetProjectID
+
+		return creds, nil
+	}
+
+	creds[EquinixMetalAuthToken] = metalAuthToken
+	creds[EquinixMetalProjectID] = metalProjectID
 
 	return creds, nil
 }
@@ -280,17 +386,80 @@ func defaultValidationFunc(creds map[string]string) error {
 			return errors.Errorf("key %v is required but isn't present", k)
 		}
 	}
+
+	return nil
+}
+
+func nutanixValidationFunc(creds map[string]string) error {
+	alwaysRequired := []string{
+		NutanixEndpoint,
+		NutanixPort,
+		NutanixUsername,
+		NutanixPassword,
+		NutanixPEEndpoint,
+		NutanixPEUsername,
+		NutanixPEPassword,
+	}
+
+	for _, key := range alwaysRequired {
+		if v, ok := creds[key]; !ok || len(v) == 0 {
+			return errors.Errorf("key %v is required but is not present", key)
+		}
+	}
+
 	return nil
 }
 
 func openstackValidationFunc(creds map[string]string) error {
-	for k, v := range creds {
-		if k == OpenStackTenantID || k == OpenStackTenantName {
-			continue
+	alwaysRequired := []string{OpenStackAuthURL, OpenStackDomainName, OpenStackRegionName}
+
+	for _, key := range alwaysRequired {
+		if v, ok := creds[key]; !ok || len(v) == 0 {
+			return errors.Errorf("key %v is required but is not present", key)
 		}
-		if len(v) == 0 {
-			return errors.Errorf("key %v is required but isn't present", k)
-		}
+	}
+
+	var (
+		appCredsIDOkay        bool
+		appCredsSecretOkay    bool
+		userCredsUsernameOkay bool
+		userCredsPasswordOkay bool
+	)
+
+	if v, ok := creds[OpenStackApplicationCredentialID]; ok && len(v) != 0 {
+		appCredsIDOkay = true
+	}
+
+	if v, ok := creds[OpenStackApplicationCredentialSecret]; ok && len(v) != 0 {
+		appCredsSecretOkay = true
+	}
+
+	if v, ok := creds[OpenStackUserName]; ok && len(v) != 0 {
+		userCredsUsernameOkay = true
+	}
+
+	if v, ok := creds[OpenStackPassword]; ok && len(v) != 0 {
+		userCredsPasswordOkay = true
+	}
+
+	if (appCredsIDOkay || appCredsSecretOkay) && (userCredsUsernameOkay || userCredsPasswordOkay) {
+		return errors.Errorf("both app credentials (%s %s) and user credentials (%s %s) found",
+			OpenStackApplicationCredentialID, OpenStackApplicationCredentialSecret,
+			OpenStackUserName, OpenStackPassword)
+	}
+
+	if (appCredsIDOkay && !appCredsSecretOkay) || (!appCredsIDOkay && appCredsSecretOkay) {
+		return errors.Errorf("only one of %s, %s is set for application credentials",
+			OpenStackApplicationCredentialID, OpenStackApplicationCredentialSecret)
+	}
+
+	if (userCredsUsernameOkay && !userCredsPasswordOkay) || (!userCredsUsernameOkay && userCredsPasswordOkay) {
+		return errors.Errorf("only one of %s, %s is set for user credentials",
+			OpenStackUserName, OpenStackPassword)
+	}
+
+	if (!appCredsIDOkay && !appCredsSecretOkay) && (!userCredsUsernameOkay && !userCredsPasswordOkay) {
+		return errors.New("no valid credentials (either application or user) found")
 	}
 
 	if v, ok := creds[OpenStackTenantID]; !ok || len(v) == 0 {

@@ -19,6 +19,7 @@ output "kubeone_api" {
 
   value = {
     endpoint = azurerm_public_ip.lbip.ip_address
+    apiserver_alternative_names = var.apiserver_alternative_names
   }
 }
 
@@ -59,10 +60,10 @@ output "kubeone_workers" {
           # see example under `cloudProviderSpec` section at: 
           # https://github.com/kubermatic/machine-controller/blob/master/examples/azure-machinedeployment.yaml
           assignPublicIP    = true
-          availabilitySet   = azurerm_availability_set.avset.name
+          availabilitySet   = azurerm_availability_set.avset_workers.name
           location          = var.location
           resourceGroup     = azurerm_resource_group.rg.name
-          routeTableName    = ""
+          routeTableName    = azurerm_route_table.rt.name
           securityGroupName = azurerm_network_security_group.sg.name
           subnetName        = azurerm_subnet.subnet.name
           vmSize            = var.worker_vm_size

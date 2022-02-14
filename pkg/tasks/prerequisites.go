@@ -18,10 +18,14 @@ package tasks
 
 import (
 	"fmt"
+	"time"
 
+	"github.com/MakeNowJust/heredoc/v2"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
+	"k8c.io/kubeone/pkg/runner"
 	"k8c.io/kubeone/pkg/scripts"
 	"k8c.io/kubeone/pkg/ssh"
 	"k8c.io/kubeone/pkg/state"
@@ -35,7 +39,22 @@ import (
 func installPrerequisites(s *state.State) error {
 	s.Logger.Infoln("Installing prerequisites...")
 
-	return s.RunTaskOnAllNodes(installPrerequisitesOnNode, state.RunParallel)
+	if err := s.RunTaskOnAllNodes(installPrerequisitesOnNode, state.RunParallel); err != nil {
+		return fmt.Errorf("failed to install prerequisites: %w", err)
+	}
+
+	return s.RunTaskOnControlPlane(func(ctx *state.State, node *kubeoneapi.HostConfig, conn ssh.Connection) error {
+		ctx.Logger.Info("Pre-pull images")
+
+		_, _, err := ctx.Runner.Run(
+			heredoc.Doc(`
+				sudo kubeadm config images pull --kubernetes-version {{ .KUBERNETES_VERSION }}
+			`), runner.TemplateVariables{
+				"KUBERNETES_VERSION": ctx.Cluster.Versions.Kubernetes,
+			})
+
+		return err
+	}, state.RunParallel)
 }
 
 func generateConfigurationFiles(s *state.State) error {
@@ -81,21 +100,31 @@ func generateConfigurationFiles(s *state.State) error {
 	return nil
 }
 
-func installPrerequisitesOnNode(s *state.State, node *kubeoneapi.HostConfig, conn ssh.Connection) error {
+func installPrerequisitesOnNode(s *state.State, node *kubeoneapi.HostConfig, _ ssh.Connection) error {
 	logger := s.Logger.WithField("os", node.OperatingSystem)
 
+	err := setupProxy(logger, s)
+	if err != nil {
+		return err
+	}
+
+	logger.Infoln("Installing kubeadm...")
+
+	return errors.Wrap(installKubeadm(s, *node), "failed to install kubeadm")
+}
+
+func setupProxy(logger *logrus.Entry, s *state.State) error {
 	logger.Infoln("Creating environment file...")
 	if err := createEnvironmentFile(s); err != nil {
 		return errors.Wrap(err, "failed to create environment file")
 	}
 
 	logger.Infoln("Configuring proxy...")
-	if err := configureProxy(s); err != nil {
+	if err := containerRuntimeEnvironment(s); err != nil {
 		return errors.Wrap(err, "failed to configure proxy for docker daemon")
 	}
 
-	logger.Infoln("Installing kubeadm...")
-	return errors.Wrap(installKubeadm(s, *node), "failed to install kubeadm")
+	return nil
 }
 
 func createEnvironmentFile(s *state.State) error {
@@ -107,6 +136,39 @@ func createEnvironmentFile(s *state.State) error {
 	_, _, err = s.Runner.RunRaw(cmd)
 
 	return err
+}
+
+func disableNMCloudSetup(s *state.State, node *kubeoneapi.HostConfig, _ ssh.Connection) error {
+	if node.OperatingSystem != kubeoneapi.OperatingSystemNameRHEL {
+		return nil
+	}
+
+	var allHosts = s.LiveCluster.ControlPlane
+	allHosts = append(allHosts, s.LiveCluster.StaticWorkers...)
+	for _, host := range allHosts {
+		if node.ID == host.Config.ID && !host.Initialized() {
+			cmd, err := scripts.DisableNMCloudSetup()
+			if err != nil {
+				return err
+			}
+
+			s.Logger.Infoln("Disable nm-cloud-setup... the node will be rebooted...")
+			// Intentionally ignore error because restarting machines causes
+			// the connection to error
+			_, _, _ = s.Runner.RunRaw(cmd)
+
+			timeout := 1 * time.Minute
+			s.Logger.Infof("Waiting for %s before proceeding to give machines time to boot up...", timeout)
+			time.Sleep(timeout)
+
+			// NB: In some cases, KubeOne might not be able to re-use SSH connections
+			// after rebooting nodes. Because of that, we close all connections here,
+			// and then KubeOne will automatically reinitialize them on the next task.
+			s.Runner.Conn.Close()
+		}
+	}
+
+	return nil
 }
 
 func installKubeadm(s *state.State, node kubeoneapi.HostConfig) error {
@@ -168,7 +230,7 @@ func uploadConfigurationFiles(s *state.State) error {
 	return s.RunTaskOnAllNodes(uploadConfigurationFilesToNode, state.RunParallel)
 }
 
-func uploadConfigurationFilesToNode(s *state.State, node *kubeoneapi.HostConfig, conn ssh.Connection) error {
+func uploadConfigurationFilesToNode(s *state.State, _ *kubeoneapi.HostConfig, conn ssh.Connection) error {
 	s.Logger.Infoln("Uploading config files...")
 
 	if err := s.Configuration.UploadTo(conn, s.WorkDir); err != nil {
@@ -216,17 +278,18 @@ func uploadConfigurationFilesToNode(s *state.State, node *kubeoneapi.HostConfig,
 	return nil
 }
 
-func configureProxy(s *state.State) error {
+func containerRuntimeEnvironment(s *state.State) error {
 	if s.Cluster.Proxy.HTTP == "" && s.Cluster.Proxy.HTTPS == "" && s.Cluster.Proxy.NoProxy == "" {
 		return nil
 	}
 
-	s.Logger.Infoln("Configuring docker/kubelet proxy...")
-	cmd, err := scripts.DaemonsProxy()
+	s.Logger.Infoln("Configuring docker/containerd/kubelet environment...")
+	cmd, err := scripts.DaemonsEnvironmentDropIn("docker", "containerd", "kubelet")
 	if err != nil {
 		return err
 	}
 
 	_, _, err = s.Runner.RunRaw(cmd)
+
 	return err
 }

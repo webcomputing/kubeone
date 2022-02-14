@@ -17,6 +17,17 @@ limitations under the License.
 variable "cluster_name" {
   description = "Name of the cluster"
   type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", var.cluster_name))
+    error_message = "Value of cluster_name should be lowercase and can only contain alphanumeric characters and hyphens(-)."
+  }
+}
+
+variable "apiserver_alternative_names" {
+  description = "subject alternative names for the API Server signing cert."
+  default     = []
+  type        = list(string)
 }
 
 variable "worker_os" {
@@ -24,7 +35,6 @@ variable "worker_os" {
 
   # valid choices are:
   # * ubuntu
-  # * centos
   default = "ubuntu"
   type    = string
 }
@@ -90,7 +100,7 @@ variable "control_plane_volume_size" {
 }
 
 variable "control_plane_image_family" {
-  default     = "ubuntu-1804-lts"
+  default     = "ubuntu-2004-lts"
   description = "Image family to use for provisioning instances"
   type        = string
 }
@@ -112,4 +122,3 @@ variable "cluster_network_cidr" {
   description = "Cluster network subnet cidr"
   type        = string
 }
-

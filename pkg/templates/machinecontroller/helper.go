@@ -22,7 +22,6 @@ import (
 
 	"github.com/pkg/errors"
 
-	"k8c.io/kubeone/pkg/addons"
 	"k8c.io/kubeone/pkg/clientutil"
 	"k8c.io/kubeone/pkg/state"
 	"k8c.io/kubeone/pkg/templates/resources"
@@ -39,15 +38,7 @@ import (
 
 const appLabelKey = "app"
 
-// Ensure install/update machine-controller
-func Ensure(s *state.State) error {
-	s.Logger.Infoln("Installing machine-controller...")
-
-	err := addons.EnsureAddonByName(s, resources.AddonMachineController)
-	return errors.Wrap(err, "failed to deploy machine-controller")
-}
-
-// WaitReady waits for machine-controller and its webhook to became ready
+// WaitReady waits for machine-controller and its webhook to become ready
 func WaitReady(s *state.State) error {
 	if !s.Cluster.MachineController.Deploy {
 		return nil
@@ -82,6 +73,7 @@ func waitForCRDs(s *state.State) error {
 func DestroyWorkers(s *state.State) error {
 	if !s.Cluster.MachineController.Deploy {
 		s.Logger.Info("Skipping deleting workers because machine-controller is disabled in configuration.")
+
 		return nil
 	}
 	if s.DynamicClient == nil {
@@ -110,6 +102,7 @@ func DestroyWorkers(s *state.State) error {
 				n.Annotations = map[string]string{}
 			}
 			n.Annotations["kubermatic.io/skip-eviction"] = "true"
+
 			return s.DynamicClient.Update(ctx, &n)
 		})
 
@@ -173,8 +166,8 @@ func DestroyWorkers(s *state.State) error {
 // WaitDestroy waits for all Machines to be deleted
 func WaitDestroy(s *state.State) error {
 	s.Logger.Info("Waiting for all machines to get deleted...")
-
 	ctx := context.Background()
+
 	return wait.Poll(5*time.Second, 5*time.Minute, func() (bool, error) {
 		list := &clusterv1alpha1.MachineList{}
 		if err := s.DynamicClient.List(ctx, list, dynclient.InNamespace(resources.MachineControllerNameSpace)); err != nil {
@@ -183,11 +176,12 @@ func WaitDestroy(s *state.State) error {
 		if len(list.Items) != 0 {
 			return false, nil
 		}
+
 		return true, nil
 	})
 }
 
-// waitForMachineController waits for machine-controller-webhook to become running
+// waitForMachineController waits for machine-controller to become running
 func waitForMachineController(ctx context.Context, client dynclient.Client) error {
 	condFn := clientutil.PodsReadyCondition(ctx, client, dynclient.ListOptions{
 		Namespace: resources.MachineControllerNameSpace,
