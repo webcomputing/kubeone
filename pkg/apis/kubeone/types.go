@@ -445,12 +445,12 @@ type ProviderSpec struct {
 	OperatingSystem string `json:"operatingSystem"`
 	// OperatingSystemSpec
 	OperatingSystemSpec json.RawMessage `json:"operatingSystemSpec,omitempty"`
-	// CloudInit
-	CloudInit []json.RawMessage `json:"cloudInit,omitempty"`
 	// Network
 	Network *ProviderStaticNetworkConfig `json:"network,omitempty"`
 	// OverwriteCloudConfig
 	OverwriteCloudConfig *string `json:"overwriteCloudConfig,omitempty"`
+	// ExtraUserData
+	ExtraUserData *string `json:"extraUserData,omitempty"`
 }
 
 // DNSConfig contains a machine's DNS configuration

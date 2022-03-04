@@ -447,8 +447,8 @@ type ProviderSpec struct {
 	Network *ProviderStaticNetworkConfig `json:"network,omitempty"`
 	// OverwriteCloudConfig
 	OverwriteCloudConfig *string `json:"overwriteCloudConfig,omitempty"`
-	// CloudInit
-	CloudInit []json.RawMessage `json:"cloudInit"`
+	// ExtraUserData
+	ExtraUserData *string `json:"extraUserData,omitempty"`
 }
 
 // DNSConfig contains a machine's DNS configuration

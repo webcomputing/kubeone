@@ -378,12 +378,12 @@ type ProviderSpec struct {
 	OperatingSystem string `json:"operatingSystem"`
 	// OperatingSystemSpec
 	OperatingSystemSpec json.RawMessage `json:"operatingSystemSpec,omitempty"`
-	// CloudInit
-	CloudInit []json.RawMessage `json:"cloudInit,omitempty"`
 	// Network
 	Network *ProviderStaticNetworkConfig `json:"network,omitempty"`
 	// OverwriteCloudConfig
 	OverwriteCloudConfig *string `json:"overwriteCloudConfig,omitempty"`
+	// ExtraUserData
+	ExtraUserData *string `json:"extraUserData,omitempty"`
 }
 
 // DNSConfig contains a machine's DNS configuration
@@ -406,7 +406,6 @@ type ProviderStaticNetworkConfig struct {
 type MachineControllerConfig struct {
 	// Deploy
 	Deploy bool   `json:"deploy,omitempty"`
-	Image  string `json:"image,omitempty"`
 }
 
 // Features controls what features will be enabled on the cluster
