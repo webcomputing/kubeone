@@ -18,7 +18,7 @@ output "kubeone_api" {
   description = "kube-apiserver LB endpoint"
 
   value = {
-    endpoint = nutanix_virtual_machine.lb.nic_list.0.ip_endpoint_list.0.ip
+    endpoint                    = nutanix_virtual_machine.lb.nic_list.0.ip_endpoint_list.0.ip
     apiserver_alternative_names = var.apiserver_alternative_names
   }
 }
@@ -53,19 +53,28 @@ output "kubeone_workers" {
     # following outputs will be parsed by kubeone and automatically merged into
     # corresponding (by name) worker definition
     "${var.cluster_name}-pool1" = {
-      replicas     = var.initial_machinedeployment_replicas
+      replicas = var.initial_machinedeployment_replicas
       providerSpec = {
-        sshPublicKeys       = [file(var.ssh_public_key_file)]
-        operatingSystem     = var.worker_os
-        operatingSystemSpec = {
-          distUpgradeOnBoot   = false
+        annotations = {
+          "k8c.io/operating-system-profile" = var.initial_machinedeployment_operating_system_profile
         }
+        sshPublicKeys   = [file(var.ssh_public_key_file)]
+        operatingSystem = var.worker_os
+        operatingSystemSpec = {
+          distUpgradeOnBoot = false
+        }
+        # nodeAnnotations are applied on resulting Node objects
+        # nodeAnnotations = {
+        #   "key" = "value"
+        # }
+        # machineObjectAnnotations are applied on resulting Machine objects
         # uncomment to following to set those kubelet parameters. More into at:
         # https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
-        # machineAnnotations = {
-        #  "v1.kubelet-config.machine-controller.kubermatic.io/SystemReserved" = "cpu=200m,memory=200Mi"
-        #  "v1.kubelet-config.machine-controller.kubermatic.io/KubeReserved"   = "cpu=200m,memory=300Mi"
-        #  "v1.kubelet-config.machine-controller.kubermatic.io/EvictionHard"   = ""
+        # machineObjectAnnotations = {
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/SystemReserved" = "cpu=200m,memory=200Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/KubeReserved"   = "cpu=200m,memory=300Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/EvictionHard"   = ""
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/MaxPods"        = "110"
         # }
         cloudProviderSpec = {
           # provider specific fields:
@@ -79,7 +88,7 @@ output "kubeone_workers" {
           cpuCores    = var.worker_vcpus
           memoryMB    = var.worker_memory_size
           diskSize    = var.worker_disk_size
-          categories  = {
+          categories = {
             "KubeOneCluster" = var.cluster_name
           }
         }
@@ -87,4 +96,3 @@ output "kubeone_workers" {
     }
   }
 }
-

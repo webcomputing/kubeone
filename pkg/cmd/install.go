@@ -17,12 +17,7 @@ limitations under the License.
 package cmd
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-
 	"github.com/MakeNowJust/heredoc/v2"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -41,36 +36,14 @@ type installOpts struct {
 func (opts *installOpts) BuildState() (*state.State, error) {
 	s, err := opts.globalOptions.BuildState()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to build state")
+		return nil, err
 	}
 
 	s.ForceInstall = opts.Force
-	s.BackupFile = opts.BackupFile
+	s.BackupFile = defaultBackupPath(opts.BackupFile, opts.ManifestFile, s.Cluster.Name)
 	s.CreateMachineDeployments = opts.CreateMachineDeployments
 
-	if s.BackupFile == "" {
-		fullPath, _ := filepath.Abs(opts.ManifestFile)
-		clusterName := s.Cluster.Name
-		s.BackupFile = filepath.Join(filepath.Dir(fullPath), fmt.Sprintf("%s.tar.gz", clusterName))
-	}
-
-	// refuse to overwrite existing backups (NB: since we attempt to
-	// write to the file later on to check for write permissions, we
-	// inadvertently create a zero byte file even if the first step
-	// of the installer fails; for this reason it's okay to find an
-	// existing, zero byte backup)
-	stat, err := os.Stat(s.BackupFile)
-	if err != nil && stat != nil && stat.Size() > 0 {
-		return nil, errors.Errorf("backup %s already exists, refusing to overwrite", opts.BackupFile)
-	}
-
-	// try to write to the file before doing anything else
-	f, err := os.OpenFile(s.BackupFile, os.O_RDWR|os.O_CREATE, 0600)
-	if err != nil {
-		return nil, errors.Wrapf(err, "cannot open %q for writing", opts.BackupFile)
-	}
-
-	return s, f.Close()
+	return s, initBackup(s.BackupFile)
 }
 
 // installCmd setups install command
@@ -86,11 +59,12 @@ func installCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 			This command takes KubeOne manifest which contains information about hosts and how the cluster should be provisioned.
 			It's possible to source information about hosts from Terraform output, using the '--tfjson' flag.
 		`),
-		Example: `kubeone install -m mycluster.yaml -t terraformoutput.json`,
+		Example:       `kubeone install -m mycluster.yaml -t terraformoutput.json`,
+		SilenceErrors: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			gopts, err := persistentGlobalOptions(rootFlags)
 			if err != nil {
-				return errors.Wrap(err, "unable to get global flags")
+				return err
 			}
 
 			opts.globalOptions = *gopts
@@ -131,18 +105,18 @@ func installCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 func runInstall(opts *installOpts) error {
 	s, err := opts.BuildState()
 	if err != nil {
-		return errors.Wrap(err, "failed to initialize State")
+		return err
 	}
 
 	s.Logger.Warn("The \"kubeone install\" command is deprecated and will be removed in KubeOne 1.6. Please use \"kubeone apply\" instead.")
 
 	// Validate credentials
-	if vErr := validateCredentials(s, opts.CredentialsFile); vErr != nil {
-		return vErr
+	if err = validateCredentials(s, opts.CredentialsFile); err != nil {
+		return err
 	}
 
 	if opts.NoInit {
-		return errors.Wrap(tasks.WithBinariesOnly(nil).Run(s), "failed to install kubernetes binaries")
+		return tasks.WithBinariesOnly(nil).Run(s)
 	}
 
 	// Probe the cluster for the actual state and the needed tasks.
@@ -153,5 +127,5 @@ func runInstall(opts *installOpts) error {
 		return err
 	}
 
-	return errors.Wrap(tasks.WithFullInstall(nil).Run(s), "failed to install the cluster")
+	return tasks.WithFullInstall(nil).Run(s)
 }

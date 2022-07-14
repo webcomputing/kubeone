@@ -27,6 +27,7 @@ import (
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
 	"k8c.io/kubeone/pkg/clientutil"
 	"k8c.io/kubeone/pkg/containerruntime"
+	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/state"
 	"k8c.io/kubeone/pkg/templates"
 
@@ -43,7 +44,7 @@ import (
 // worker machines
 func CreateMachineDeployments(s *state.State) error {
 	if s.DynamicClient == nil {
-		return errors.New("kubernetes dynamic client in not initialized")
+		return fail.NoKubeClient()
 	}
 
 	ctx := context.Background()
@@ -52,12 +53,12 @@ func CreateMachineDeployments(s *state.State) error {
 	for _, workerset := range s.Cluster.DynamicWorkers {
 		machinedeployment, err := createMachineDeployment(s.Cluster, workerset)
 		if err != nil {
-			return errors.Wrap(err, "failed to generate MachineDeployment")
+			return err
 		}
 
 		err = clientutil.CreateOrUpdate(ctx, s.DynamicClient, machinedeployment)
 		if err != nil {
-			return errors.Wrap(err, "failed to ensure MachineDeployment")
+			return err
 		}
 	}
 
@@ -75,7 +76,7 @@ func GenerateMachineDeploymentsManifest(s *state.State) (string, error) {
 	for _, workerset := range s.Cluster.DynamicWorkers {
 		machinedeployment, err := createMachineDeployment(s.Cluster, workerset)
 		if err != nil {
-			return "", errors.Wrap(err, "failed to generate MachineDeployment")
+			return "", err
 		}
 		machinedeployment.TypeMeta = metav1.TypeMeta{
 			APIVersion: clusterv1alpha1.SchemeGroupVersion.String(),
@@ -91,12 +92,12 @@ func GenerateMachineDeploymentsManifest(s *state.State) (string, error) {
 func createMachineDeployment(cluster *kubeoneapi.KubeOneCluster, workerset kubeoneapi.DynamicWorkerConfig) (*clusterv1alpha1.MachineDeployment, error) {
 	cloudProviderSpec, err := machineSpec(cluster, workerset, cluster.CloudProvider)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to generate machineSpec")
+		return nil, err
 	}
 
 	cloudProviderSpecJSON, err := json.Marshal(cloudProviderSpec)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to marshal cloudProviderSpec to JSON")
+		return nil, fail.Runtime(err, "marshalling cloudProviderSpec")
 	}
 
 	workerset.Config.CloudProviderSpec = cloudProviderSpecJSON
@@ -104,12 +105,21 @@ func createMachineDeployment(cluster *kubeoneapi.KubeOneCluster, workerset kubeo
 	encoded, err := json.Marshal(struct {
 		kubeoneapi.ProviderSpec
 		CloudProvider string `json:"cloudProvider"`
+
+		// cut out those field from original ProviderSpec
+		// we use them, but they should NOT end up in the resulted machineDeployment
+		Annotations              bool `json:"annotations,omitempty"`
+		MachineAnnotations       bool `json:"machineAnnotations,omitempty"`
+		NodeAnnotations          bool `json:"nodeAnnotations,omitempty"`
+		MachineObjectAnnotations bool `json:"machineObjectAnnotations,omitempty"`
+		Labels                   bool `json:"labels,omitempty"`
+		Taints                   bool `json:"taints,omitempty"`
 	}{
 		ProviderSpec:  workerset.Config,
-		CloudProvider: cluster.CloudProvider.CloudProviderName(),
+		CloudProvider: cluster.CloudProvider.MachineControllerCloudProvider(),
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to JSON marshal providerSpec")
+		return nil, fail.Runtime(err, "marshalling reduced providerSpec")
 	}
 
 	replicas := int32(*workerset.Replicas)
@@ -152,11 +162,11 @@ func createMachineDeployment(cluster *kubeoneapi.KubeOneCluster, workerset kubeo
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      labels.Merge(workerset.Config.Labels, workersetNameLabels),
 					Namespace:   metav1.NamespaceSystem,
-					Annotations: machineAnnotations,
+					Annotations: labels.Merge(workerset.Config.MachineObjectAnnotations, machineAnnotations),
 				},
 				Spec: clusterv1alpha1.MachineSpec{
 					ObjectMeta: metav1.ObjectMeta{
-						Annotations: workerset.Config.MachineAnnotations,
+						Annotations: workerset.Config.NodeAnnotations,
 						Labels:      labels.Merge(workerset.Config.Labels, workersetNameLabels),
 					},
 					Versions: clusterv1alpha1.MachineVersionInfo{
@@ -193,7 +203,7 @@ func machineSpec(cluster *kubeoneapi.KubeOneCluster, workerset kubeoneapi.Dynami
 
 	specRaw := workerset.Config.CloudProviderSpec
 	if specRaw == nil {
-		return nil, errors.New("could't find cloudProviderSpec")
+		return nil, fail.Config(errors.New("could't find cloudProviderSpec"), "sanity check")
 	}
 
 	if provider.AWS != nil {
@@ -201,7 +211,7 @@ func machineSpec(cluster *kubeoneapi.KubeOneCluster, workerset kubeoneapi.Dynami
 
 		err = json.Unmarshal(specRaw, &awsSpec)
 		if err != nil {
-			return nil, errors.Wrap(err, "could not parse AWS Spec for worker machines")
+			return nil, fail.Runtime(err, "marshalling AWSSpec")
 		}
 
 		tagName := fmt.Sprintf("kubernetes.io/cluster/%s", cluster.Name)
@@ -214,14 +224,14 @@ func machineSpec(cluster *kubeoneapi.KubeOneCluster, workerset kubeoneapi.Dynami
 		// effectively overwrite specRaw retrieved earlier
 		specRaw, err = json.Marshal(awsSpec)
 		if err != nil {
-			return nil, errors.Wrap(err, "could not marshal AWSSpec")
+			return nil, fail.Runtime(err, "marshalling AWSSpec")
 		}
 	}
 
 	spec := make(map[string]interface{})
 	err = json.Unmarshal(specRaw, &spec)
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to parse the workerset spec")
+		return nil, fail.Runtime(err, "unmarshalling machineSpec")
 	}
 
 	return spec, nil

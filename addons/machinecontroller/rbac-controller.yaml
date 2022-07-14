@@ -158,8 +158,6 @@ rules:
   - apiGroups:
       - "cluster.k8s.io"
     resources:
-      - "clusters"
-      - "clusters/status"
       - "machinedeployments"
       - "machinedeployments/status"
       - "machines"
@@ -190,6 +188,15 @@ rules:
       - "persistentvolumes"
       - "secrets"
       - "configmaps"
+    verbs:
+      - "list"
+      - "get"
+      - "watch"
+  # volumeAttachments permissions are needed by vsphere clusters
+  - apiGroups:
+      - "storage.k8s.io"
+    resources:
+      - "volumeattachments"
     verbs:
       - "list"
       - "get"

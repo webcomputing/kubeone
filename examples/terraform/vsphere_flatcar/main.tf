@@ -23,6 +23,7 @@ provider "vsphere" {
 
 locals {
   resource_pool_id = var.resource_pool_name == "" ? data.vsphere_compute_cluster.cluster.resource_pool_id : data.vsphere_resource_pool.pool[0].id
+  hostnames        = formatlist("${var.cluster_name}-cp-%d", [1, 2, 3])
 }
 
 data "vsphere_datacenter" "dc" {
@@ -56,7 +57,8 @@ data "vsphere_virtual_machine" "template" {
 }
 
 resource "vsphere_virtual_machine" "control_plane" {
-  count            = 3
+  count = var.control_plane_vm_count
+
   name             = "${var.cluster_name}-cp-${count.index + 1}"
   resource_pool_id = local.resource_pool_id
   folder           = var.folder_name
@@ -105,7 +107,7 @@ resource "vsphere_virtual_machine" "control_plane" {
               path       = "/etc/hostname"
               mode       = 420
               contents = {
-                source = "data:,${var.cluster_name}-cp-${count.index + 1}"
+                source = "data:,${local.hostnames[count.index]}"
               }
             }
           ]
@@ -121,4 +123,16 @@ resource "vsphere_virtual_machine" "control_plane" {
       }))
     }
   }
+}
+
+/*
+vSphere DRS requires a vSphere Enterprise Plus license. Toggle variable value off if you don't have it.
+An anti-affinity rule places a control_plane machines across different hosts within a cluster, and is useful for preventing single points of failure.
+*/
+
+resource "vsphere_compute_cluster_vm_anti_affinity_rule" "vm_anti_affinity_rule" {
+  count               = var.is_vsphere_enterprise_plus_license ? 1 : 0
+  name                = "vm-anti-affinity-rule"
+  compute_cluster_id  = data.vsphere_compute_cluster.cluster.id
+  virtual_machine_ids = vsphere_virtual_machine.control_plane.*.id
 }

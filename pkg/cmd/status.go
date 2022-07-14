@@ -18,7 +18,6 @@ package cmd
 
 import (
 	"github.com/MakeNowJust/heredoc/v2"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -36,11 +35,12 @@ func statusCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 			This command takes KubeOne manifest which contains information about hosts. It's possible to source information about
 			hosts from Terraform output, using the '--tfjson' flag.
 		`),
-		Example: `kubeone status -m mycluster.yaml -t terraformoutput.json`,
+		Example:       `kubeone status -m mycluster.yaml -t terraformoutput.json`,
+		SilenceErrors: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			gopts, err := persistentGlobalOptions(rootFlags)
 			if err != nil {
-				return errors.Wrap(err, "unable to get global flags")
+				return err
 			}
 
 			return runStatus(gopts)
@@ -54,8 +54,8 @@ func statusCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 func runStatus(opts *globalOptions) error {
 	s, err := opts.BuildState()
 	if err != nil {
-		return errors.Wrap(err, "failed to initialize State")
+		return err
 	}
 
-	return errors.Wrap(tasks.WithClusterStatus(nil).Run(s), "failed to get cluster status")
+	return tasks.WithClusterStatus(nil).Run(s)
 }

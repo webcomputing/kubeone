@@ -18,13 +18,13 @@ output "kubeone_api" {
   description = "kube-apiserver LB endpoint"
 
   value = {
-    endpoint                    = aws_elb.control_plane.dns_name
+    endpoint                    = local.kubeapi_endpoint
     apiserver_alternative_names = var.apiserver_alternative_names
   }
 }
 
 output "ssh_commands" {
-  value = formatlist("ssh -J ${var.bastion_user}@${aws_instance.bastion.public_ip} ${var.ssh_username}@%s", aws_instance.control_plane.*.private_ip)
+  value = formatlist("ssh -J ${local.bastion_user}@${aws_instance.bastion.public_ip} ${local.ssh_username}@%s", aws_instance.control_plane.*.private_ip)
 }
 
 output "kubeone_hosts" {
@@ -40,10 +40,19 @@ output "kubeone_hosts" {
       ssh_agent_socket     = var.ssh_agent_socket
       ssh_port             = var.ssh_port
       ssh_private_key_file = var.ssh_private_key_file
-      ssh_user             = var.ssh_username
+      ssh_user             = local.ssh_username
       bastion              = aws_instance.bastion.public_ip
       bastion_port         = var.bastion_port
-      bastion_user         = var.bastion_user
+      bastion_user         = local.bastion_user
+      labels               = var.control_plane_labels
+      # uncomment to following to set those kubelet parameters. More into at:
+      # https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
+      # kubelet            = {
+      #   system_reserved = "cpu=200m,memory=200Mi"
+      #   kube_reserved   = "cpu=200m,memory=300Mi"
+      #   eviction_hard   = ""
+      #   max_pods        = 110
+      # }
     }
   }
 }
@@ -59,10 +68,10 @@ output "kubeone_static_workers" {
       ssh_agent_socket     = var.ssh_agent_socket
       ssh_port             = var.ssh_port
       ssh_private_key_file = var.ssh_private_key_file
-      ssh_user             = var.ssh_username
+      ssh_user             = local.ssh_username
       bastion              = aws_instance.bastion.public_ip
       bastion_port         = var.bastion_port
-      bastion_user         = var.bastion_user
+      bastion_user         = local.bastion_user
     }
   }
 }
@@ -77,7 +86,7 @@ output "kubeone_workers" {
       replicas = var.initial_machinedeployment_replicas
       providerSpec = {
         annotations = {
-          "k8c.io/operating-system-profile" = var.ami_filters[var.os].osp_name
+          "k8c.io/operating-system-profile" = local.initial_machinedeployment_operating_system_profile
         }
         sshPublicKeys   = local.worker_deploy_ssh_key
         operatingSystem = local.worker_os
@@ -86,14 +95,20 @@ output "kubeone_workers" {
           provisioningUtility = "cloud-init"
         }
         labels = {
-          isSpotInstance = format("%t", var.initial_machinedeployment_spotinstances)
+          isSpotInstance = format("%t", local.initial_machinedeployment_spotinstances)
         }
+        # nodeAnnotations are applied on resulting Node objects
+        # nodeAnnotations = {
+        #   "key" = "value"
+        # }
+        # machineObjectAnnotations are applied on resulting Machine objects
         # uncomment to following to set those kubelet parameters. More into at:
         # https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
-        # machineAnnotations = {
-        #  "v1.kubelet-config.machine-controller.kubermatic.io/SystemReserved" = "cpu=200m,memory=200Mi"
-        #  "v1.kubelet-config.machine-controller.kubermatic.io/KubeReserved"   = "cpu=200m,memory=300Mi"
-        #  "v1.kubelet-config.machine-controller.kubermatic.io/EvictionHard"   = ""
+        # machineObjectAnnotations = {
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/SystemReserved" = "cpu=200m,memory=200Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/KubeReserved"   = "cpu=200m,memory=300Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/EvictionHard"   = ""
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/MaxPods"        = "110"
         # }
         cloudProviderSpec = {
           # provider specific fields:
@@ -111,8 +126,12 @@ output "kubeone_workers" {
           diskSize         = 50
           diskType         = "gp2"
           ## Only applicable if diskType = io1
-          diskIops           = 500
-          isSpotInstance     = var.initial_machinedeployment_spotinstances
+          diskIops       = 500
+          isSpotInstance = local.initial_machinedeployment_spotinstances
+          ## Only applicable if isSpotInstance is true
+          spotInstanceConfig = {
+            maxPrice = format("%f", var.initial_machinedeployment_spotinstances_max_price)
+          }
           ebsVolumeEncrypted = false
           tags = {
             "${var.cluster_name}-workers" = ""
@@ -125,7 +144,7 @@ output "kubeone_workers" {
       replicas = var.initial_machinedeployment_replicas
       providerSpec = {
         annotations = {
-          "k8c.io/operating-system-profile" = var.ami_filters[var.os].osp_name
+          "k8c.io/operating-system-profile" = local.initial_machinedeployment_operating_system_profile
         }
         sshPublicKeys   = local.worker_deploy_ssh_key
         operatingSystem = local.worker_os
@@ -134,8 +153,21 @@ output "kubeone_workers" {
           provisioningUtility = "cloud-init"
         }
         labels = {
-          isSpotInstance = format("%t", var.initial_machinedeployment_spotinstances)
+          isSpotInstance = format("%t", local.initial_machinedeployment_spotinstances)
         }
+        # nodeAnnotations are applied on resulting Node objects
+        # nodeAnnotations = {
+        #   "key" = "value"
+        # }
+        # machineObjectAnnotations are applied on resulting Machine objects
+        # uncomment to following to set those kubelet parameters. More into at:
+        # https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
+        # machineObjectAnnotations = {
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/SystemReserved" = "cpu=200m,memory=200Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/KubeReserved"   = "cpu=200m,memory=300Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/EvictionHard"   = ""
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/MaxPods"        = "110"
+        # }
         cloudProviderSpec = {
           # provider specific fields:
           # see example under `cloudProviderSpec` section at:
@@ -152,8 +184,12 @@ output "kubeone_workers" {
           diskSize         = 50
           diskType         = "gp2"
           ## Only applicable if diskType = io1
-          diskIops           = 500
-          isSpotInstance     = var.initial_machinedeployment_spotinstances
+          diskIops       = 500
+          isSpotInstance = local.initial_machinedeployment_spotinstances
+          ## Only applicable if isSpotInstance is true
+          spotInstanceConfig = {
+            maxPrice = format("%f", var.initial_machinedeployment_spotinstances_max_price)
+          }
           ebsVolumeEncrypted = false
           tags = {
             "${var.cluster_name}-workers" = ""
@@ -166,7 +202,7 @@ output "kubeone_workers" {
       replicas = var.initial_machinedeployment_replicas
       providerSpec = {
         annotations = {
-          "k8c.io/operating-system-profile" = var.ami_filters[var.os].osp_name
+          "k8c.io/operating-system-profile" = local.initial_machinedeployment_operating_system_profile
         }
         sshPublicKeys   = local.worker_deploy_ssh_key
         operatingSystem = local.worker_os
@@ -175,8 +211,21 @@ output "kubeone_workers" {
           provisioningUtility = "cloud-init"
         }
         labels = {
-          isSpotInstance = format("%t", var.initial_machinedeployment_spotinstances)
+          isSpotInstance = format("%t", local.initial_machinedeployment_spotinstances)
         }
+        # nodeAnnotations are applied on resulting Node objects
+        # nodeAnnotations = {
+        #   "key" = "value"
+        # }
+        # machineObjectAnnotations are applied on resulting Machine objects
+        # uncomment to following to set those kubelet parameters. More into at:
+        # https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
+        # machineObjectAnnotations = {
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/SystemReserved" = "cpu=200m,memory=200Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/KubeReserved"   = "cpu=200m,memory=300Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/EvictionHard"   = ""
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/MaxPods"        = "110"
+        # }
         cloudProviderSpec = {
           # provider specific fields:
           # see example under `cloudProviderSpec` section at:
@@ -193,8 +242,12 @@ output "kubeone_workers" {
           diskSize         = 50
           diskType         = "gp2"
           ## Only applicable if diskType = io1
-          diskIops           = 500
-          isSpotInstance     = var.initial_machinedeployment_spotinstances
+          diskIops       = 500
+          isSpotInstance = local.initial_machinedeployment_spotinstances
+          ## Only applicable if isSpotInstance is true
+          spotInstanceConfig = {
+            maxPrice = format("%f", var.initial_machinedeployment_spotinstances_max_price)
+          }
           ebsVolumeEncrypted = false
           tags = {
             "${var.cluster_name}-workers" = ""

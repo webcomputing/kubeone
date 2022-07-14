@@ -23,36 +23,41 @@ import (
 	"github.com/pkg/errors"
 
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
+	"k8c.io/kubeone/pkg/executor"
+	"k8c.io/kubeone/pkg/executor/executorfs"
+	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/scripts"
-	"k8c.io/kubeone/pkg/ssh"
-	"k8c.io/kubeone/pkg/ssh/sshiofs"
 )
 
 // Runner bundles a connection to a host with the verbosity and
 // other options for running commands via SSH.
 type Runner struct {
-	Conn    ssh.Connection
-	Prefix  string
-	OS      kubeoneapi.OperatingSystemName
-	Verbose bool
+	Executor executor.Interface
+	Prefix   string
+	OS       kubeoneapi.OperatingSystemName
+	Verbose  bool
 }
 
 // TemplateVariables is a render context for templates
 type TemplateVariables map[string]interface{}
 
-func (r *Runner) NewFS() sshiofs.MkdirFS {
-	return sshiofs.New(r.Conn)
+func (r *Runner) NewFS() executor.MkdirFS {
+	return executorfs.New(r.Executor)
 }
 
 func (r *Runner) RunRaw(cmd string) (string, string, error) {
-	if r.Conn == nil {
-		return "", "", errors.New("runner is not tied to an opened SSH connection")
+	if r.Executor == nil {
+		return "", "", fail.RuntimeError{
+			Op:  "checking available executor adapter",
+			Err: errors.New("runner has no open adapter"),
+		}
 	}
 
 	if !r.Verbose {
-		stdout, stderr, _, err := r.Conn.Exec(cmd)
+		stdout, stderr, _, err := r.Executor.Exec(cmd)
 		if err != nil {
-			err = errors.Wrap(err, stderr)
+			r.Executor.Close()
+			r.Executor = nil
 		}
 
 		return stdout, stderr, err
@@ -65,7 +70,12 @@ func (r *Runner) RunRaw(cmd string) (string, string, error) {
 	defer stderr.Close()
 
 	// run the command
-	_, err := r.Conn.POpen(cmd, nil, stdout, stderr)
+	_, err := r.Executor.POpen(cmd, nil, stdout, stderr)
+
+	if err != nil {
+		r.Executor.Close()
+		r.Executor = nil
+	}
 
 	return stdout.String(), stderr.String(), err
 }

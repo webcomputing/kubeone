@@ -18,21 +18,28 @@ package machinecontroller
 
 // AWSSpec holds cloudprovider spec for AWS
 type AWSSpec struct {
-	AMI                string            `json:"ami"`
-	AssignPublicIP     *bool             `json:"assignPublicIP"`
-	AvailabilityZone   string            `json:"availabilityZone"`
-	DiskIops           *int              `json:"diskIops,omitempty"`
-	DiskSize           *int              `json:"diskSize"`
-	DiskType           string            `json:"diskType"`
-	EBSVolumeEncrypted bool              `json:"ebsVolumeEncrypted"`
-	InstanceProfile    string            `json:"instanceProfile"`
-	InstanceType       *string           `json:"instanceType"`
-	IsSpotInstance     *bool             `json:"isSpotInstance,omitempty"`
-	Region             string            `json:"region"`
-	SecurityGroupIDs   []string          `json:"securityGroupIDs"`
-	SubnetID           string            `json:"subnetId"`
-	Tags               map[string]string `json:"tags"`
-	VPCID              string            `json:"vpcId"`
+	AMI                string                 `json:"ami"`
+	AssignPublicIP     *bool                  `json:"assignPublicIP"`
+	AvailabilityZone   string                 `json:"availabilityZone"`
+	DiskIops           *int                   `json:"diskIops,omitempty"`
+	DiskSize           *int                   `json:"diskSize"`
+	DiskType           string                 `json:"diskType"`
+	EBSVolumeEncrypted bool                   `json:"ebsVolumeEncrypted"`
+	InstanceProfile    string                 `json:"instanceProfile"`
+	InstanceType       *string                `json:"instanceType"`
+	IsSpotInstance     *bool                  `json:"isSpotInstance,omitempty"`
+	SpotInstanceConfig *AWSSpotInstanceConfig `json:"spotInstanceConfig,omitempty"`
+	Region             string                 `json:"region"`
+	SecurityGroupIDs   []string               `json:"securityGroupIDs"`
+	SubnetID           string                 `json:"subnetId"`
+	Tags               map[string]string      `json:"tags"`
+	VPCID              string                 `json:"vpcId"`
+}
+
+type AWSSpotInstanceConfig struct {
+	MaxPrice             string `json:"maxPrice,omitempty"`
+	PersistentRequest    bool   `json:"persistentRequest,omitempty"`
+	InterruptionBehavior string `json:"interruptionBehavior,omitempty"`
 }
 
 // DigitalOceanSpec holds cloudprovider spec for DigitalOcean
@@ -143,25 +150,67 @@ type VSphereSpec struct {
 
 // AzureSpec holds cloudprovider spec for Azure
 type AzureSpec struct {
-	AssignPublicIP    bool              `json:"assignPublicIP"`
-	AvailabilitySet   string            `json:"availabilitySet"`
-	Location          string            `json:"location"`
-	ResourceGroup     string            `json:"resourceGroup"`
-	RouteTableName    string            `json:"routeTableName"`
-	SecurityGroupName string            `json:"securityGroupName"`
-	Zones             []string          `json:"zones"`
-	ImagePlan         *AzureImagePlan   `json:"imagePlan"`
-	SubnetName        string            `json:"subnetName"`
-	Tags              map[string]string `json:"tags"`
-	VMSize            string            `json:"vmSize"`
-	VNetName          string            `json:"vnetName"`
-	ImageID           string            `json:"imageID"`
-	OSDiskSize        int               `json:"osDiskSize"`
-	DataDiskSize      int               `json:"dataDiskSize"`
+	Location              string               `json:"location"`
+	ResourceGroup         string               `json:"resourceGroup"`
+	VNetResourceGroup     string               `json:"vnetResourceGroup"`
+	VMSize                string               `json:"vmSize"`
+	VNetName              string               `json:"vnetName"`
+	SubnetName            string               `json:"subnetName"`
+	LoadBalancerSku       string               `json:"loadBalancerSku"`
+	RouteTableName        string               `json:"routeTableName"`
+	AvailabilitySet       string               `json:"availabilitySet"`
+	AssignAvailabilitySet *bool                `json:"assignAvailabilitySet,omitempty"`
+	SecurityGroupName     string               `json:"securityGroupName"`
+	Zones                 []string             `json:"zones"`
+	ImagePlan             *AzureImagePlan      `json:"imagePlan"`
+	ImageReference        *AzureImageReference `json:"imageReference,omitempty"`
+
+	ImageID        string            `json:"imageID"`
+	OSDiskSize     int               `json:"osDiskSize"`
+	OSDiskSKU      *string           `json:"osDiskSKU,omitempty"`
+	DataDiskSize   int               `json:"dataDiskSize"`
+	DataDiskSKU    *string           `json:"dataDiskSKU,omitempty"`
+	AssignPublicIP bool              `json:"assignPublicIP"`
+	Tags           map[string]string `json:"tags"`
 }
 
 type AzureImagePlan struct {
 	Name      string `json:"name,omitempty"`
 	Publisher string `json:"publisher,omitempty"`
 	Product   string `json:"product,omitempty"`
+}
+
+type AzureImageReference struct {
+	Publisher string `json:"publisher,omitempty"`
+	Offer     string `json:"offer,omitempty"`
+	Sku       string `json:"sku,omitempty"`
+	Version   string `json:"version,omitempty"`
+}
+
+// VMWareCloudDirectorSpec represents VMware Cloud Director specific configuration.
+type VMWareCloudDirectorSpec struct {
+	// Provider configuration.
+	Organization string `json:"organization"`
+	VDC          string `json:"vdc"`
+
+	// VM configuration.
+	VApp     string `json:"vapp"`
+	Template string `json:"template"`
+	Catalog  string `json:"catalog"`
+
+	// Network configuration.
+	Network          string `json:"network"`
+	IPAllocationMode string `json:"ipAllocationMode"`
+
+	// Compute configuration.
+	CPUs     int64 `json:"cpus"`
+	CPUCores int64 `json:"cpuCores"`
+	MemoryMB int64 `json:"memoryMB"`
+
+	// Storage configuration.
+	DiskSizeGB     *int64  `json:"diskSizeGB,omitempty"`
+	StorageProfile *string `json:"storageProfile,omitempty"`
+
+	// Metadata configuration.
+	Metadata *map[string]string `json:"metadata,omitempty"`
 }

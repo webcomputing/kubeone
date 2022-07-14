@@ -16,6 +16,19 @@
 
 set -eu -o pipefail
 
+TERRAFORM_DOCS="go run github.com/terraform-docs/terraform-docs@v0.16.0"
+
+for input in examples/terraform/*/README.md.in; do
+  dir=$(dirname "$input")
+  target=$(basename "$input" .in)
+  full_target="$dir/$target"
+  echo "$full_target"
+  cat "$input" > "$dir/$target"
+  $TERRAFORM_DOCS --lockfile=false md "$dir" >> "$dir/$target"
+done
+
+make gogenerate
+
 export GOFLAGS=-mod=vendor
 
 # The code generation script takes the following arguments:

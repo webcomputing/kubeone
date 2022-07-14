@@ -1,6 +1,6 @@
 +++
 title = "v1beta2 API Reference"
-date = 2022-02-04T17:38:06+02:00
+date = 2022-07-06T19:10:49+03:00
 weight = 11
 +++
 ## v1beta2
@@ -59,6 +59,7 @@ weight = 11
 * [StaticAuditLogConfig](#staticauditlogconfig)
 * [StaticWorkersConfig](#staticworkersconfig)
 * [SystemPackages](#systempackages)
+* [VMwareCloudDirectorSpec](#vmwareclouddirectorspec)
 * [VersionConfig](#versionconfig)
 * [VsphereSpec](#vspherespec)
 * [WeaveNetSpec](#weavenetspec)
@@ -179,7 +180,8 @@ Only one cloud provider must be defined at the single time.
 | hetzner | Hetzner | *[HetznerSpec](#hetznerspec) | false |
 | nutanix | Nutanix | *[NutanixSpec](#nutanixspec) | false |
 | openstack | Openstack | *[OpenstackSpec](#openstackspec) | false |
-| equinixmetal | Equinix Metal | *[EquinixMetalSpec](#equinixmetalspec) | false |
+| equinixmetal | EquinixMetal | *[EquinixMetalSpec](#equinixmetalspec) | false |
+| vmwareCloudDirector | VMware Cloud Director | *[VMwareCloudDirectorSpec](#vmwareclouddirectorspec) | false |
 | vsphere | Vsphere | *[VsphereSpec](#vspherespec) | false |
 | none | None | *[NoneSpec](#nonespec) | false |
 
@@ -399,7 +401,8 @@ HostConfig describes a single control plane node.
 | bastionUser | BastionUser is system login name to use when connecting to bastion host. Default value is \"root\". | string | false |
 | hostname | Hostname is the hostname(1) of the host. Default value is populated at the runtime via running `hostname -f` command over ssh. | string | false |
 | isLeader | IsLeader indicates this host as a session leader. Default value is populated at the runtime. | bool | false |
-| taints | Taints if not provided (i.e. nil) defaults to TaintEffectNoSchedule, with key node-role.kubernetes.io/master for control plane nodes. Explicitly empty (i.e. []corev1.Taint{}) means no taints will be applied (this is default for worker nodes). | [][corev1.Taint](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#taint-v1-core) | false |
+| taints | Taints are taints applied to nodes. Those taints are only applied when the node is being provisioned. If not provided (i.e. nil) for control plane nodes, it defaults to:\n  * For Kubernetes 1.23 and older: TaintEffectNoSchedule with key node-role.kubernetes.io/master\n  * For Kubernetes 1.24 and newer: TaintEffectNoSchedule with keys\n    node-role.kubernetes.io/control-plane and node-role.kubernetes.io/master\nExplicitly empty (i.e. []corev1.Taint{}) means no taints will be applied (this is default for worker nodes). | [][corev1.Taint](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#taint-v1-core) | false |
+| labels | Labels to be used to apply (or remove, with minus symbol suffix, see more kubectl help label) labels to/from node | map[string]string | false |
 | kubelet | Kubelet | [KubeletConfig](#kubeletconfig) | false |
 | operatingSystem | OperatingSystem information, can be populated at the runtime. | OperatingSystemName | false |
 
@@ -462,7 +465,7 @@ KubeOneCluster is KubeOne Cluster API Schema
 | addons | Addons are used to deploy additional manifests. | *[Addons](#addons) | false |
 | systemPackages | SystemPackages configure kubeone behaviour regarding OS packages. | *[SystemPackages](#systempackages) | false |
 | registryConfiguration | RegistryConfiguration configures how Docker images are pulled from an image registry | *[RegistryConfiguration](#registryconfiguration) | false |
-| loggingConfig | LoggingConfig configures the Kubelet's log configuration | [LoggingConfig](#loggingconfig) | false |
+| loggingConfig | LoggingConfig configures the Kubelet's log rotation | [LoggingConfig](#loggingconfig) | false |
 
 [Back to Group](#v1beta2)
 
@@ -487,6 +490,7 @@ KubeletConfig provides some kubelet configuration options
 | systemReserved | SystemReserved configure --system-reserved command-line flag of the kubelet. See more at: https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/ | map[string]string | false |
 | kubeReserved | KubeReserved configure --kube-reserved command-line flag of the kubelet. See more at: https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/ | map[string]string | false |
 | evictionHard | EvictionHard configure --eviction-hard command-line flag of the kubelet. See more at: https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/ | map[string]string | false |
+| maxPods | MaxPods configures maximum number of pods per node. If not provided, default value provided by kubelet will be used (max. 110 pods per node) | *int32 | false |
 
 [Back to Group](#v1beta2)
 
@@ -557,13 +561,13 @@ OpenIDConnectConfig config
 | Field | Description | Scheme | Required |
 | ----- | ----------- | ------ | -------- |
 | issuerUrl | IssuerURL | string | true |
-| clientId | ClientID | string | true |
-| usernameClaim | UsernameClaim | string | true |
-| usernamePrefix | UsernamePrefix | string | true |
-| groupsClaim | GroupsClaim | string | true |
-| groupsPrefix | GroupsPrefix | string | true |
+| clientId | ClientID | string | false |
+| usernameClaim | UsernameClaim | string | false |
+| usernamePrefix | UsernamePrefix. The value `-` can be used to disable all prefixing. | string | false |
+| groupsClaim | GroupsClaim | string | false |
+| groupsPrefix | GroupsPrefix. The value `-` can be used to disable all prefixing. | string | false |
 | requiredClaim | RequiredClaim | string | true |
-| signingAlgs | SigningAlgs | string | true |
+| signingAlgs | SigningAlgs | string | false |
 | caFile | CAFile | string | true |
 
 [Back to Group](#v1beta2)
@@ -618,7 +622,9 @@ ProviderSpec describes a worker node
 | ----- | ----------- | ------ | -------- |
 | cloudProviderSpec | CloudProviderSpec | [json.RawMessage](https://golang.org/pkg/encoding/json/#RawMessage) | true |
 | annotations | Annotations set MachineDeployment.ObjectMeta.Annotations | map[string]string | false |
-| machineAnnotations | MachineAnnotations set MachineDeployment.Spec.Template.Spec.ObjectMeta.Annotations a way to annotate resulted Nodes | map[string]string | false |
+| machineAnnotations | MachineAnnotations set MachineDeployment.Spec.Template.Spec.ObjectMeta.Annotations as a way to annotate resulting Nodes Deprecated: Use NodeAnnotations instead. | map[string]string | false |
+| nodeAnnotations | NodeAnnotations set MachineDeployment.Spec.Template.Spec.ObjectMeta.Annotations as a way to annotate resulting Nodes | map[string]string | false |
+| machineObjectAnnotations | MachineObjectAnnotations set MachineDeployment.Spec.Template.Metadata.Annotations as a way to annotate resulting Machine objects. Those annotations are not propagated to Node objects. If you want to annotate resulting Nodes as well, see NodeAnnotations | map[string]string | false |
 | labels | Labels | map[string]string | false |
 | taints | Taints | [][corev1.Taint](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#taint-v1-core) | false |
 | sshPublicKeys | SSHPublicKeys | []string | false |
@@ -707,6 +713,17 @@ SystemPackages controls configurations of APT/YUM
 | Field | Description | Scheme | Required |
 | ----- | ----------- | ------ | -------- |
 | configureRepositories | ConfigureRepositories (true by default) is a flag to control automatic configuration of kubeadm / docker repositories. | bool | false |
+
+[Back to Group](#v1beta2)
+
+### VMwareCloudDirectorSpec
+
+VMwareCloudDirectorSpec defines the VMware Cloud Director provider
+
+| Field | Description | Scheme | Required |
+| ----- | ----------- | ------ | -------- |
+| vApp | VApp is the name of vApp for VMs. | string | false |
+| storageProfile | StorageProfile is the name of storage profile to be used for disks. | string | true |
 
 [Back to Group](#v1beta2)
 

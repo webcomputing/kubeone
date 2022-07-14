@@ -20,16 +20,17 @@ import (
 	"context"
 	"time"
 
-	"github.com/pkg/errors"
-
 	"k8c.io/kubeone/pkg/clientutil"
+	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/state"
 	"k8c.io/kubeone/pkg/templates/resources"
 
 	clusterv1alpha1 "github.com/kubermatic/machine-controller/pkg/apis/cluster/v1alpha1"
 
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	errorsutil "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
@@ -46,16 +47,20 @@ func WaitReady(s *state.State) error {
 
 	s.Logger.Infoln("Waiting for machine-controller to come up...")
 
+	if err := cleanupStaleResources(s.Context, s.DynamicClient); err != nil {
+		return err
+	}
+
 	if err := waitForWebhook(s.Context, s.DynamicClient); err != nil {
-		return errors.Wrap(err, "machine-controller-webhook did not come up")
+		return err
 	}
 
 	if err := waitForMachineController(s.Context, s.DynamicClient); err != nil {
-		return errors.Wrap(err, "machine-controller did not come up")
+		return err
 	}
 
 	if err := waitForCRDs(s); err != nil {
-		return errors.Wrap(err, "machine-controller CRDs did not come up")
+		return err
 	}
 
 	return nil
@@ -66,7 +71,7 @@ func waitForCRDs(s *state.State) error {
 	condFn := clientutil.CRDsReadyCondition(s.Context, s.DynamicClient, CRDNames())
 	err := wait.Poll(5*time.Second, 3*time.Minute, condFn)
 
-	return errors.Wrap(err, "failed waiting for CRDs to become ready and established")
+	return fail.KubeClient(err, "waiting for machine-controller CRDs to became ready")
 }
 
 // DestroyWorkers destroys all MachineDeployment, MachineSet and Machine objects
@@ -77,7 +82,7 @@ func DestroyWorkers(s *state.State) error {
 		return nil
 	}
 	if s.DynamicClient == nil {
-		return errors.New("kubernetes client not initialized")
+		return fail.NoKubeClient()
 	}
 
 	ctx := context.Background()
@@ -86,7 +91,7 @@ func DestroyWorkers(s *state.State) error {
 	s.Logger.Info("Annotating nodes to skip eviction...")
 	nodes := &corev1.NodeList{}
 	if err := s.DynamicClient.List(ctx, nodes); err != nil {
-		return errors.Wrap(err, "unable to list nodes")
+		return fail.KubeClient(err, "listing Nodes")
 	}
 
 	for _, node := range nodes.Items {
@@ -95,7 +100,7 @@ func DestroyWorkers(s *state.State) error {
 		retErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			n := corev1.Node{}
 			if err := s.DynamicClient.Get(ctx, nodeKey, &n); err != nil {
-				return err
+				return fail.KubeClient(err, "getting %T %s", n, nodeKey)
 			}
 
 			if n.Annotations == nil {
@@ -103,11 +108,11 @@ func DestroyWorkers(s *state.State) error {
 			}
 			n.Annotations["kubermatic.io/skip-eviction"] = "true"
 
-			return s.DynamicClient.Update(ctx, &n)
+			return fail.KubeClient(s.DynamicClient.Update(ctx, &n), "updating %T %s", n, nodeKey)
 		})
 
 		if retErr != nil {
-			return errors.Wrapf(retErr, "unable to annotate node %s", node.Name)
+			return retErr
 		}
 	}
 
@@ -116,13 +121,15 @@ func DestroyWorkers(s *state.State) error {
 	mdList := &clusterv1alpha1.MachineDeploymentList{}
 	if err := s.DynamicClient.List(ctx, mdList, dynclient.InNamespace(resources.MachineControllerNameSpace)); err != nil {
 		if !errorsutil.IsNotFound(err) {
-			return errors.Wrap(err, "unable to list machinedeployment objects")
+			return fail.KubeClient(err, "listing %T", mdList)
 		}
 	}
 
 	for i := range mdList.Items {
 		if err := s.DynamicClient.Delete(ctx, &mdList.Items[i]); err != nil {
-			return errors.Wrapf(err, "unable to delete machinedeployment object %s", mdList.Items[i].Name)
+			md := mdList.Items[i]
+
+			return fail.KubeClient(err, "deleting %T %s", md, dynclient.ObjectKeyFromObject(&md))
 		}
 	}
 
@@ -131,14 +138,16 @@ func DestroyWorkers(s *state.State) error {
 	msList := &clusterv1alpha1.MachineSetList{}
 	if err := s.DynamicClient.List(ctx, msList, dynclient.InNamespace(resources.MachineControllerNameSpace)); err != nil {
 		if !errorsutil.IsNotFound(err) {
-			return errors.Wrap(err, "unable to list machineset objects")
+			return fail.KubeClient(err, "getting %T", mdList)
 		}
 	}
 
 	for i := range msList.Items {
 		if err := s.DynamicClient.Delete(ctx, &msList.Items[i]); err != nil {
 			if !errorsutil.IsNotFound(err) {
-				return errors.Wrapf(err, "unable to delete machineset object %s", msList.Items[i].Name)
+				ms := msList.Items[i]
+
+				return fail.KubeClient(err, "deleting %T %s", ms, dynclient.ObjectKeyFromObject(&ms))
 			}
 		}
 	}
@@ -148,14 +157,16 @@ func DestroyWorkers(s *state.State) error {
 	mList := &clusterv1alpha1.MachineList{}
 	if err := s.DynamicClient.List(ctx, mList, dynclient.InNamespace(resources.MachineControllerNameSpace)); err != nil {
 		if !errorsutil.IsNotFound(err) {
-			return errors.Wrap(err, "unable to list machine objects")
+			return fail.KubeClient(err, "getting %T", mList)
 		}
 	}
 
 	for i := range mList.Items {
 		if err := s.DynamicClient.Delete(ctx, &mList.Items[i]); err != nil {
 			if !errorsutil.IsNotFound(err) {
-				return errors.Wrapf(err, "unable to delete machine object %s", mList.Items[i].Name)
+				ma := mList.Items[i]
+
+				return fail.KubeClient(err, "deleting %T %s", ma, dynclient.ObjectKeyFromObject(&ma))
 			}
 		}
 	}
@@ -171,7 +182,7 @@ func WaitDestroy(s *state.State) error {
 	return wait.Poll(5*time.Second, 5*time.Minute, func() (bool, error) {
 		list := &clusterv1alpha1.MachineList{}
 		if err := s.DynamicClient.List(ctx, list, dynclient.InNamespace(resources.MachineControllerNameSpace)); err != nil {
-			return false, errors.Wrap(err, "unable to list machine objects")
+			return false, fail.KubeClient(err, "getting %T", list)
 		}
 		if len(list.Items) != 0 {
 			return false, nil
@@ -190,7 +201,7 @@ func waitForMachineController(ctx context.Context, client dynclient.Client) erro
 		}),
 	})
 
-	return wait.Poll(5*time.Second, 3*time.Minute, condFn)
+	return fail.KubeClient(wait.Poll(5*time.Second, 3*time.Minute, condFn), "waiting for machine-controller to became ready")
 }
 
 // waitForWebhook waits for machine-controller-webhook to become running
@@ -202,12 +213,30 @@ func waitForWebhook(ctx context.Context, client dynclient.Client) error {
 		}),
 	})
 
-	return wait.Poll(5*time.Second, 3*time.Minute, condFn)
+	return fail.KubeClient(wait.Poll(5*time.Second, 3*time.Minute, condFn), "waiting for machine-controller webhook to became ready")
+}
+
+func cleanupStaleResources(ctx context.Context, client dynclient.Client) error {
+	tryToRemove := []dynclient.Object{
+		&admissionregistrationv1.MutatingWebhookConfiguration{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "machine-controller.kubermatic.io",
+				Namespace: metav1.NamespaceSystem,
+			},
+		},
+	}
+
+	for _, obj := range tryToRemove {
+		if err := clientutil.DeleteIfExists(ctx, client, obj); err != nil {
+			return fail.KubeClient(err, "deleting %T %s", obj, dynclient.ObjectKeyFromObject(obj))
+		}
+	}
+
+	return nil
 }
 
 func CRDNames() []string {
 	return []string{
-		"clusters.cluster.k8s.io",
 		"machinedeployments.cluster.k8s.io",
 		"machines.cluster.k8s.io",
 		"machinesets.cluster.k8s.io",

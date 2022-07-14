@@ -18,9 +18,13 @@ output "kubeone_api" {
   description = "kube-apiserver LB endpoint"
 
   value = {
-    endpoint = openstack_networking_floatingip_v2.lb.address
+    endpoint                    = openstack_networking_floatingip_v2.lb.address
     apiserver_alternative_names = var.apiserver_alternative_names
   }
+}
+
+output "ssh_commands" {
+  value = formatlist("ssh -J ${var.bastion_user}@${openstack_networking_floatingip_v2.lb.address} ${var.ssh_username}@%s", openstack_compute_instance_v2.control_plane.*.access_ip_v4)
 }
 
 output "kubeone_hosts" {
@@ -50,8 +54,11 @@ output "kubeone_workers" {
     # following outputs will be parsed by kubeone and automatically merged into
     # corresponding (by name) worker definition
     "${var.cluster_name}-pool1" = {
-      replicas = 1
+      replicas = var.initial_machinedeployment_replicas
       providerSpec = {
+        annotations = {
+          "k8c.io/operating-system-profile" = var.initial_machinedeployment_operating_system_profile
+        }
         sshPublicKeys   = [file(var.ssh_public_key_file)]
         operatingSystem = var.worker_os
         operatingSystemSpec = {
@@ -81,4 +88,3 @@ output "kubeone_workers" {
     }
   }
 }
-

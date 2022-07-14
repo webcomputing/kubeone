@@ -30,9 +30,10 @@ import (
 	"github.com/spf13/pflag"
 	yaml "gopkg.in/yaml.v2"
 
-	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
 	"k8c.io/kubeone/pkg/apis/kubeone/config"
+	kubeonev1beta2 "k8c.io/kubeone/pkg/apis/kubeone/v1beta2"
 	"k8c.io/kubeone/pkg/containerruntime"
+	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/templates/machinecontroller"
 	"k8c.io/kubeone/pkg/yamled"
 
@@ -93,6 +94,7 @@ func configCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 	}
 
 	cmd.AddCommand(configPrintCmd())
+	cmd.AddCommand(configDumpCmd(rootFlags))
 	cmd.AddCommand(configMigrateCmd(rootFlags))
 	cmd.AddCommand(configMachinedeploymentsCmd(rootFlags))
 	cmd.AddCommand(configImagesCmd(rootFlags))
@@ -111,8 +113,9 @@ func configPrintCmd() *cobra.Command {
 			customize the configuration manifest. For the full reference of the
 			configuration manifest, run the print command with --full flag.
 		`),
-		Args:    cobra.ExactArgs(0),
-		Example: fmt.Sprintf("kubeone config print --provider digitalocean --kubernetes-version %s --cluster-name example", defaultKubernetesVersion),
+		Args:          cobra.ExactArgs(0),
+		Example:       fmt.Sprintf("kubeone config print --provider digitalocean --kubernetes-version %s --cluster-name example", defaultKubernetesVersion),
+		SilenceErrors: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runPrint(opts)
 		},
@@ -205,12 +208,13 @@ The v1beta1 version of the KubeOneCluster manifest is deprecated and will be
 removed in one of the next versions.
 The new manifest is printed on the standard output.
 `,
-		Args:    cobra.ExactArgs(0),
-		Example: `kubeone config migrate --manifest mycluster.yaml`,
+		Args:          cobra.ExactArgs(0),
+		Example:       `kubeone config migrate --manifest mycluster.yaml`,
+		SilenceErrors: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			gopts, err := persistentGlobalOptions(rootFlags)
 			if err != nil {
-				return errors.Wrap(err, "unable to get global flags")
+				return err
 			}
 
 			return runMigrate(gopts)
@@ -232,12 +236,13 @@ The manifest contains all MachineDeployments defined in the API/config.
 Note that manifest may include already created MachineDeployments.
 The manifest is printed on the standard output.
 `,
-		Args:    cobra.ExactArgs(0),
-		Example: `kubeone config machinedeployments --manifest mycluster.yaml`,
+		Args:          cobra.ExactArgs(0),
+		Example:       `kubeone config machinedeployments --manifest mycluster.yaml`,
+		SilenceErrors: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			gopts, err := persistentGlobalOptions(rootFlags)
 			if err != nil {
-				return errors.Wrap(err, "unable to get global flags")
+				return err
 			}
 
 			return runGenerateMachineDeployments(gopts)
@@ -263,19 +268,19 @@ func runPrint(printOptions *printOpts) error {
 
 		tmpl, err := template.New("example-manifest").Parse(exampleManifest)
 		if err != nil {
-			return errors.Wrap(err, "unable to parse the example manifest template")
+			return fail.Runtime(err, "parsing example-manifest template")
 		}
 
 		var buffer bytes.Buffer
 		err = tmpl.Execute(&buffer, printOptions)
 		if err != nil {
-			return errors.Wrap(err, "unable to run the example manifest template")
+			return fail.Runtime(err, "executing example-manifest template")
 		}
 
-		cfg := &kubeoneapi.KubeOneCluster{}
+		cfg := kubeonev1beta2.NewKubeOneCluster()
 		err = kyaml.UnmarshalStrict(buffer.Bytes(), &cfg)
 		if err != nil {
-			return errors.Wrap(err, "failed to decode new config")
+			return fail.Runtime(err, "testing marshal/unmarshal")
 		}
 
 		fmt.Println(buffer.String())
@@ -283,12 +288,7 @@ func runPrint(printOptions *printOpts) error {
 		return nil
 	}
 
-	err := createAndPrintManifest(printOptions)
-	if err != nil {
-		return errors.Wrap(err, "unable to create example manifest")
-	}
-
-	return nil
+	return createAndPrintManifest(printOptions)
 }
 
 func createAndPrintManifest(printOptions *printOpts) error {
@@ -328,6 +328,9 @@ func createAndPrintManifest(printOptions *printOpts) error {
 	case "equinixmetal":
 		cfg.Set(yamled.Path{"cloudProvider", "equinixmetal"}, providerVal)
 		cfg.Set(yamled.Path{"cloudProvider", "external"}, true)
+	case "vmwareCloudDirector":
+		cfg.Set(yamled.Path{"cloudProvider", "vmwareCloudDirector"}, providerVal)
+		cfg.Set(yamled.Path{"cloudProvider", "external"}, true)
 	case "vsphere":
 		cfg.Set(yamled.Path{"cloudProvider", "vsphere"}, providerVal)
 		cfg.Set(yamled.Path{"cloudProvider", "cloudConfig"}, "<< cloudConfig is required for vSphere >>\n")
@@ -338,7 +341,7 @@ func createAndPrintManifest(printOptions *printOpts) error {
 	// Hosts
 	if len(printOptions.ControlPlaneHosts) != 0 {
 		if err := parseControlPlaneHosts(cfg, printOptions.ControlPlaneHosts); err != nil {
-			return errors.Wrap(err, "unable to parse provided hosts")
+			return err
 		}
 	}
 
@@ -392,12 +395,7 @@ func createAndPrintManifest(printOptions *printOpts) error {
 	cfg.Set(yamled.Path{"loggingConfig", "containerLogMaxFiles"}, printOptions.ContainerLogMaxFiles)
 
 	// Print the manifest
-	err := validateAndPrintConfig(cfg)
-	if err != nil {
-		return errors.Wrap(err, "unable to validate and print config")
-	}
-
-	return nil
+	return validateAndPrintConfig(cfg)
 }
 
 func printFeatures(cfg *yamled.Document, printOptions *printOpts) {
@@ -441,14 +439,18 @@ func parseControlPlaneHosts(cfg *yamled.Document, hostList string) error {
 		for _, field := range fields {
 			val := strings.Split(field, ":")
 			if len(val) != 2 {
-				return errors.New("incorrect format of host variable")
+				return fail.RuntimeError{
+					Op:  "parsing host variable",
+					Err: errors.New("incorrect format"),
+				}
 			}
 
 			if val[0] == "sshPort" {
 				portInt, err := strconv.Atoi(val[1])
 				if err != nil {
-					return errors.Wrap(err, "unable to convert ssh port to integer")
+					return fail.Runtime(err, "parsing sshPort")
 				}
+
 				h[val[0]] = portInt
 
 				continue
@@ -467,27 +469,22 @@ func runMigrate(opts *globalOptions) error {
 	// Convert old config yaml to new config yaml
 	newConfigYAML, err := config.MigrateOldConfig(opts.ManifestFile)
 	if err != nil {
-		return errors.Wrap(err, "unable to migrate the provided configuration")
+		return err
 	}
 
-	err = validateAndPrintConfig(newConfigYAML)
-	if err != nil {
-		return errors.Wrap(err, "unable to validate and print config")
-	}
-
-	return nil
+	return validateAndPrintConfig(newConfigYAML)
 }
 
 // runGenerateMachineDeployments generates the MachineDeployments manifest
 func runGenerateMachineDeployments(opts *globalOptions) error {
 	s, err := opts.BuildState()
 	if err != nil {
-		return errors.Wrap(err, "failed to initialize State")
+		return err
 	}
 
 	manifest, err := machinecontroller.GenerateMachineDeploymentsManifest(s)
 	if err != nil {
-		return errors.Wrap(err, "failed to generate machinedeployments manifest")
+		return err
 	}
 
 	fmt.Println(manifest)
@@ -498,21 +495,22 @@ func runGenerateMachineDeployments(opts *globalOptions) error {
 func validateAndPrintConfig(cfgYaml interface{}) error {
 	// Validate new config by unmarshaling
 	var buffer bytes.Buffer
+
 	err := yaml.NewEncoder(&buffer).Encode(cfgYaml)
 	if err != nil {
-		return errors.Wrap(err, "failed to encode new config as YAML")
+		return fail.Runtime(err, "marshalling new config as YAML")
 	}
 
-	cfg := &kubeoneapi.KubeOneCluster{}
+	cfg := kubeonev1beta2.NewKubeOneCluster()
 	err = kyaml.UnmarshalStrict(buffer.Bytes(), &cfg)
 	if err != nil {
-		return errors.Wrap(err, "failed to decode new config")
+		return fail.Runtime(err, "testing marshal/unmarshal")
 	}
 
 	// Print new config yaml
 	err = yaml.NewEncoder(os.Stdout).Encode(cfgYaml)
 	if err != nil {
-		return errors.Wrap(err, "failed to encode new config as YAML")
+		return fail.Runtime(err, "marshalling new config as YAML")
 	}
 
 	return nil
@@ -750,78 +748,6 @@ systemPackages:
   # will add Docker and Kubernetes repositories to OS package manager
   configureRepositories: true # it's true by default
 
-# assetConfiguration controls how assets (e.g. CNI, Kubelet, kube-apiserver, and more) are pulled.
-# The AssetConfiguration API is an alpha API currently working only on Amazon Linux 2.
-assetConfiguration:
-  # kubernetes configures the image registry and repository for the core Kubernetes
-  # images (kube-apiserver, kube-controller-manager, kube-scheduler, and kube-proxy).
-  # kubernetes respects only ImageRepository (ImageTag is ignored).
-  # Default image repository and tag: defaulted dynamically by Kubeadm.
-  # Defaults to RegistryConfiguration.OverwriteRegistry if left empty
-  # and RegistryConfiguration.OverwriteRegistry is specified.
-  kubernetes:
-    # imageRepository customizes the registry/repository
-    imageRepository: ""
-  # pause configures the sandbox (pause) image to be used by Kubelet.
-  # Default image repository and tag: defaulted dynamically by Kubeadm.
-  # Defaults to RegistryConfiguration.OverwriteRegistry if left empty
-  # and RegistryConfiguration.OverwriteRegistry is specified.
-  pause:
-    # imageRepository customizes the registry/repository
-    imageRepository: ""
-    # imageTag customizes the image tag
-    imageTag: ""
-  # coreDNS configures the image registry and tag to be used for deploying
-  # the CoreDNS component.
-  # Default image repository and tag: defaulted dynamically by Kubeadm.
-  # Defaults to RegistryConfiguration.OverwriteRegistry if left empty
-  # and RegistryConfiguration.OverwriteRegistry is specified.
-  coreDNS:
-    # imageRepository customizes the registry/repository
-    imageRepository: ""
-    # imageTag customizes the image tag
-    imageTag: ""
-  # etcd configures the image registry and tag to be used for deploying
-  # the Etcd component.
-  # Default image repository and tag: defaulted dynamically by Kubeadm.
-  # Defaults to RegistryConfiguration.OverwriteRegistry if left empty
-  # and RegistryConfiguration.OverwriteRegistry is specified.
-  etcd:
-    # imageRepository customizes the registry/repository
-    imageRepository: ""
-    # imageTag customizes the image tag
-    imageTag: ""
-  # metricsServer configures the image registry and tag to be used for deploying
-  # the metrics-server component.
-  # Default image repository and tag: defaulted dynamically by Kubeadm.
-  # Defaults to RegistryConfiguration.OverwriteRegistry if left empty
-  # and RegistryConfiguration.OverwriteRegistry is specified.
-  metricsServer:
-    # imageRepository customizes the registry/repository
-    imageRepository: ""
-    # imageTag customizes the image tag
-    imageTag: ""
-  # cni configures the source for downloading the CNI binaries.
-  # If not specified, kubernetes-cni package will be installed.
-  # Default: none
-  cni:
-    url: ""
-  # nodeBinaries configures the source for downloading the
-  # Kubernetes Node Binaries tarball (e.g. kubernetes-node-linux-amd64.tar.gz).
-  # The tarball must have .tar.gz as the extension and must contain the
-  # following files:
-  # - kubernetes/node/bin/kubelet
-  # - kubernetes/node/bin/kubeadm
-  # If not specified, kubelet and kubeadm packages will be installed.
-  # Default: none
-  nodeBinaries:
-    url: ""
-  # kubectl configures the source for downloading the Kubectl binary.
-  # If not specified, kubelet package will be installed.
-  # Default: none
-  kubectl:
-    url: ""
-
 # registryConfiguration controls how images used for components deployed by
 # KubeOne and kubeadm are pulled from an image registry
 registryConfiguration:
@@ -855,7 +781,7 @@ addons:
   # available addons.
   # Check out the documentation to find more information about what are embedded
   # addons and how to use them:
-  # https://docs.kubermatic.com/kubeone/v1.3/guides/addons/
+  # https://docs.kubermatic.com/kubeone/v1.4/guides/addons/
   addons:
     # name of the addon to be enabled/deployed (e.g. backups-restic)
     - name: ""
@@ -885,13 +811,32 @@ addons:
 #     # prefixed with "env:" to refer to an environment variable.
 #     sshPrivateKeyFile: '/home/me/.ssh/id_rsa'
 #     sshAgentSocket: 'env:SSH_AUTH_SOCK'
-#     # Taints is used to apply taints to the node.
-#     # If not provided defaults to TaintEffectNoSchedule, with key
-#     # node-role.kubernetes.io/master for control plane nodes.
-#     # Explicitly empty (i.e. taints: {}) means no taints will be applied.
+#     # Taints are taints applied to nodes. If not provided (i.e. nil) for control plane nodes,
+#     # it defaults to:
+#     #   * For Kubernetes 1.23 and older: TaintEffectNoSchedule with key node-role.kubernetes.io/master
+#     #   * For Kubernetes 1.24 and newer: TaintEffectNoSchedule with keys
+#     #     node-role.kubernetes.io/control-plane and node-role.kubernetes.io/master
+#     # Explicitly empty (i.e. []corev1.Taint{}) means no taints will be applied (this is default for worker nodes).
 #     taints:
 #     - key: "node-role.kubernetes.io/master"
 #       effect: "NoSchedule"
+#     labels:
+#       # to add new custom label
+#       "new-custom-label": "custom-value"
+#       # to delete existing label (use minus symbol with empty value)
+#       "node.kubernetes.io/exclude-from-external-load-balancers-": ""
+#     # kubelet is used to control kubelet configuration
+#     # uncomment the following to set those kubelet parameters. More into at:
+#     # https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/#
+#     # kubelet:
+#     #   systemReserved:
+#     #     cpu: 200m
+#     #     memory: 200Mi
+#     #   kubeReserved:
+#     #     cpu: 200m
+#     #     memory: 300Mi
+#     #   evictionHard: {}
+#     #   maxPods: 110
 
 # A list of static workers, not managed by MachineController.
 # The list of nodes can be overwritten by providing Terraform output.
@@ -914,6 +859,18 @@ addons:
 #     # taints:
 #     # - key: ""
 #     #   effect: ""
+#     # kubelet is used to control kubelet configuration
+#     # uncomment the following to set those kubelet parameters. More into at:
+#     # https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/#
+#     # kubelet:
+#     #   systemReserved:
+#     #     cpu: 200m
+#     #     memory: 200Mi
+#     #   kubeReserved:
+#     #     cpu: 200m
+#     #     memory: 300Mi
+#     #   evictionHard: {}
+#     #   maxPods: 110
 
 # The API server can also be overwritten by Terraform. Provide the
 # external address of your load balancer or the public addresses of

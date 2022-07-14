@@ -27,8 +27,15 @@ locals {
   vpc_mask              = parseint(split("/", data.aws_vpc.selected.cidr_block)[1], 10)
   subnet_total          = pow(2, var.subnets_cidr - local.vpc_mask)
   subnet_newbits        = var.subnets_cidr - (32 - local.vpc_mask)
-  worker_os             = var.worker_os == "" ? var.os : var.worker_os
+  worker_os             = var.worker_os == "" ? var.ami_filters[var.os].worker_os : var.worker_os
   worker_deploy_ssh_key = var.worker_deploy_ssh_key ? [aws_key_pair.deployer.public_key] : []
+  ssh_username          = var.ssh_username == "" ? var.ami_filters[var.os].ssh_username : var.ssh_username
+  bastion_user          = var.bastion_user == "" ? var.ami_filters[var.os].ssh_username : var.bastion_user
+  kubeapi_endpoint      = var.disable_kubeapi_loadbalancer ? aws_instance.control_plane.0.private_ip : aws_elb.control_plane.0.dns_name
+  loadbalancer_count    = var.disable_kubeapi_loadbalancer ? 0 : 1
+
+  initial_machinedeployment_spotinstances            = var.initial_machinedeployment_spotinstances_max_price > 0
+  initial_machinedeployment_operating_system_profile = var.initial_machinedeployment_operating_system_profile == "" ? var.ami_filters[var.os].osp_name : var.initial_machinedeployment_operating_system_profile
 
   subnets = {
     (local.zoneA) = length(aws_subnet.public.*.id) > 0 ? aws_subnet.public[0].id : ""
@@ -195,6 +202,8 @@ resource "aws_security_group" "ssh" {
 ################################## KUBE-API LB #################################
 
 resource "aws_elb" "control_plane" {
+  count = local.loadbalancer_count
+
   name            = "${var.cluster_name}-api-lb"
   internal        = var.internal_api_lb
   subnets         = aws_subnet.public.*.id

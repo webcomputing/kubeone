@@ -18,7 +18,7 @@ output "kubeone_api" {
   description = "kube-apiserver LB endpoint"
 
   value = {
-    endpoint = google_compute_address.lb_ip.address
+    endpoint                    = local.kubeapi_endpoint
     apiserver_alternative_names = var.apiserver_alternative_names
   }
 }
@@ -48,8 +48,11 @@ output "kubeone_workers" {
     # following outputs will be parsed by kubeone and automatically merged into
     # corresponding (by name) worker definition
     "${var.cluster_name}-pool1" = {
-      replicas = 1
+      replicas = var.initial_machinedeployment_replicas
       providerSpec = {
+        annotations = {
+          "k8c.io/operating-system-profile" = var.initial_machinedeployment_operating_system_profile
+        }
         sshPublicKeys   = [file(var.ssh_public_key_file)]
         operatingSystem = var.worker_os
         operatingSystemSpec = {
@@ -62,8 +65,8 @@ output "kubeone_workers" {
           diskSize              = 50
           diskType              = "pd-ssd"
           machineType           = var.workers_type
-          network               = google_compute_network.network.self_link
-          subnetwork            = google_compute_subnetwork.subnet.self_link
+          network               = data.google_compute_network.network.self_link
+          subnetwork            = data.google_compute_subnetwork.subnet.self_link
           zone                  = "${local.zone_first}"
           preemptible           = false
           assignPublicIPAddress = true
@@ -81,4 +84,3 @@ output "kubeone_workers" {
     }
   }
 }
-

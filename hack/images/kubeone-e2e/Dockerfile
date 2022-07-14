@@ -14,22 +14,20 @@
 
 # building image
 
-FROM golang:1.17.5 as builder
+FROM golang:1.18.3 as builder
 
 RUN apt-get update && apt-get install -y \
     unzip
 
-ENV TERRAFORM_VERSION "1.1.0"
+WORKDIR /download
+
+ENV TERRAFORM_VERSION "1.2.3"
 RUN curl -fL https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip | funzip >/usr/local/bin/terraform
 RUN chmod +x /usr/local/bin/terraform
 
-ENV KUBETEST_COMMIT "eb1a87c9083a31f9a9dda7822cb674f9f8d99439"
-ENV KUBETESTS_ROOT "/opt/kube-test"
-ENV GO111MODULE=on
-
-# Install the kubetest binary
-RUN go get -v k8s.io/test-infra/kubetest@${KUBETEST_COMMIT} && \
-    go clean -modcache -cache
+ENV SONOBUOY_VERSION "0.56.7"
+RUN curl -fL https://github.com/vmware-tanzu/sonobuoy/releases/download/v${SONOBUOY_VERSION}/sonobuoy_${SONOBUOY_VERSION}_linux_amd64.tar.gz | tar vxz
+RUN chmod +x sonobuoy
 
 COPY install-kube-tests-binaries.sh /opt/install-kube-tests-binaries.sh
 RUN /opt/install-kube-tests-binaries.sh
@@ -37,7 +35,7 @@ RUN /opt/install-kube-tests-binaries.sh
 # resulting image
 
 
-FROM golang:1.17.5
+FROM golang:1.18.3
 
 ARG version
 
@@ -47,9 +45,8 @@ LABEL description="Set of kubernetes binaries to conduct kubeone E2E tests"
 LABEL maintainer="https://github.com/kubermatic/kubeone/blob/master/OWNERS"
 
 ENV KUBETESTS_ROOT "/opt/kube-test"
-ENV GO111MODULE on
 ENV USER root
 
 COPY --from=builder /usr/local/bin/terraform /usr/local/bin/terraform
-COPY --from=builder /go/bin/kubetest /usr/local/bin/kubetest
+COPY --from=builder /download/sonobuoy /usr/local/bin/sonobuoy
 COPY --from=builder ${KUBETESTS_ROOT} ${KUBETESTS_ROOT}

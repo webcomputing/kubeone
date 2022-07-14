@@ -25,6 +25,7 @@ import (
 	"k8c.io/kubeone/pkg/templates/resources"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/utils/pointer"
 )
 
 func TestValidateKubeOneCluster(t *testing.T) {
@@ -513,6 +514,13 @@ func TestValidateCloudProviderSpec(t *testing.T) {
 			expectedError: false,
 		},
 		{
+			name: "valid VMware Cloud Director provider config",
+			providerConfig: kubeoneapi.CloudProviderSpec{
+				VMwareCloudDirector: &kubeoneapi.VMwareCloudDirectorSpec{},
+			},
+			expectedError: false,
+		},
+		{
 			name: "valid vSphere provider config",
 			providerConfig: kubeoneapi.CloudProviderSpec{
 				Vsphere:     &kubeoneapi.VsphereSpec{},
@@ -764,9 +772,9 @@ func TestValidateVersionConfig(t *testing.T) {
 			expectedError: false,
 		},
 		{
-			name: "not supported kubernetes version (1.24.0)",
+			name: "not supported kubernetes version (1.99.0)",
 			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "1.24.0",
+				Kubernetes: "1.99.0",
 			},
 			expectedError: true,
 		},
@@ -878,100 +886,12 @@ func TestValidateKubernetesSupport(t *testing.T) {
 			expectedError: false,
 		},
 		{
-			name: "vSphere 1.23.0 cluster",
+			name: "vSphere 1.25.0 cluster",
 			providerConfig: kubeoneapi.CloudProviderSpec{
 				Vsphere: &kubeoneapi.VsphereSpec{},
 			},
 			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "1.23.0",
-			},
-			expectedError: true,
-		},
-		{
-			name: "AWS 1.22.0 cluster with IPVS",
-			providerConfig: kubeoneapi.CloudProviderSpec{
-				AWS: &kubeoneapi.AWSSpec{},
-			},
-			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "1.22.0",
-			},
-			networkConfig: kubeoneapi.ClusterNetworkConfig{
-				CNI: &kubeoneapi.CNI{
-					Canal: &kubeoneapi.CanalSpec{},
-				},
-				KubeProxy: &kubeoneapi.KubeProxyConfig{
-					IPVS: &kubeoneapi.IPVSConfig{},
-				},
-			},
-			expectedError: false,
-		},
-		{
-			name: "AWS 1.23.0 cluster with IPVS",
-			providerConfig: kubeoneapi.CloudProviderSpec{
-				AWS: &kubeoneapi.AWSSpec{},
-			},
-			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "1.23.0",
-			},
-			networkConfig: kubeoneapi.ClusterNetworkConfig{
-				CNI: &kubeoneapi.CNI{
-					Canal: &kubeoneapi.CanalSpec{},
-				},
-				KubeProxy: &kubeoneapi.KubeProxyConfig{
-					IPVS: &kubeoneapi.IPVSConfig{},
-				},
-			},
-			expectedError: true,
-		},
-		{
-			name: "AWS 1.22.0 cluster with IPVS and calico-vxlan",
-			providerConfig: kubeoneapi.CloudProviderSpec{
-				AWS: &kubeoneapi.AWSSpec{},
-			},
-			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "1.22.0",
-			},
-			networkConfig: kubeoneapi.ClusterNetworkConfig{
-				CNI: &kubeoneapi.CNI{
-					External: &kubeoneapi.ExternalCNISpec{},
-				},
-				KubeProxy: &kubeoneapi.KubeProxyConfig{
-					IPVS: &kubeoneapi.IPVSConfig{},
-				},
-			},
-			addonsConfig: &kubeoneapi.Addons{
-				Enable: true,
-				Addons: []kubeoneapi.Addon{
-					{
-						Name: "calico-vxlan",
-					},
-				},
-			},
-			expectedError: false,
-		},
-		{
-			name: "AWS 1.23.0 cluster with IPVS and calico-vxlan",
-			providerConfig: kubeoneapi.CloudProviderSpec{
-				AWS: &kubeoneapi.AWSSpec{},
-			},
-			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "1.23.0",
-			},
-			networkConfig: kubeoneapi.ClusterNetworkConfig{
-				CNI: &kubeoneapi.CNI{
-					External: &kubeoneapi.ExternalCNISpec{},
-				},
-				KubeProxy: &kubeoneapi.KubeProxyConfig{
-					IPVS: &kubeoneapi.IPVSConfig{},
-				},
-			},
-			addonsConfig: &kubeoneapi.Addons{
-				Enable: true,
-				Addons: []kubeoneapi.Addon{
-					{
-						Name: "calico-vxlan",
-					},
-				},
+				Kubernetes: "1.25.0",
 			},
 			expectedError: true,
 		},
@@ -1315,6 +1235,46 @@ func TestValidateDynamicWorkerConfig(t *testing.T) {
 			dynamicWorkerConfig: []kubeoneapi.DynamicWorkerConfig{
 				{
 					Replicas: intPtr(3),
+				},
+			},
+			expectedError: true,
+		},
+		{
+			name: "only machineAnnotations set",
+			dynamicWorkerConfig: []kubeoneapi.DynamicWorkerConfig{
+				{
+					Name:     "test-1",
+					Replicas: intPtr(3),
+					Config: kubeoneapi.ProviderSpec{
+						MachineAnnotations: map[string]string{"test": "test"},
+					},
+				},
+			},
+			expectedError: false,
+		},
+		{
+			name: "only nodeAnnotations set",
+			dynamicWorkerConfig: []kubeoneapi.DynamicWorkerConfig{
+				{
+					Name:     "test-1",
+					Replicas: intPtr(3),
+					Config: kubeoneapi.ProviderSpec{
+						NodeAnnotations: map[string]string{"test": "test"},
+					},
+				},
+			},
+			expectedError: false,
+		},
+		{
+			name: "both machineAnnotations and nodeAnnotations set",
+			dynamicWorkerConfig: []kubeoneapi.DynamicWorkerConfig{
+				{
+					Name:     "test-1",
+					Replicas: intPtr(3),
+					Config: kubeoneapi.ProviderSpec{
+						MachineAnnotations: map[string]string{"test": "test"},
+						NodeAnnotations:    map[string]string{"test": "test"},
+					},
 				},
 			},
 			expectedError: true,
@@ -1879,6 +1839,86 @@ func TestValidateHostConfig(t *testing.T) {
 				},
 			},
 			expectedError: true,
+		},
+		{
+			name: "kubelet.maxPods valid",
+			hostConfig: []kubeoneapi.HostConfig{
+				{
+					PublicAddress:     "192.168.1.1",
+					PrivateAddress:    "192.168.0.1",
+					SSHPrivateKeyFile: "test",
+					SSHAgentSocket:    "test",
+					SSHUsername:       "root",
+					Kubelet: kubeoneapi.KubeletConfig{
+						MaxPods: pointer.Int32Ptr(110),
+					},
+				},
+			},
+			expectedError: false,
+		},
+		{
+			name: "kubelet.maxPods zero (invalid)",
+			hostConfig: []kubeoneapi.HostConfig{
+				{
+					PublicAddress:     "192.168.1.1",
+					PrivateAddress:    "192.168.0.1",
+					SSHPrivateKeyFile: "test",
+					SSHAgentSocket:    "test",
+					SSHUsername:       "root",
+					Kubelet: kubeoneapi.KubeletConfig{
+						MaxPods: pointer.Int32Ptr(0),
+					},
+				},
+			},
+			expectedError: true,
+		},
+		{
+			name: "kubelet.maxPods negative (invalid)",
+			hostConfig: []kubeoneapi.HostConfig{
+				{
+					PublicAddress:     "192.168.1.1",
+					PrivateAddress:    "192.168.0.1",
+					SSHPrivateKeyFile: "test",
+					SSHAgentSocket:    "test",
+					SSHUsername:       "root",
+					Kubelet: kubeoneapi.KubeletConfig{
+						MaxPods: pointer.Int32Ptr(-10),
+					},
+				},
+			},
+			expectedError: true,
+		},
+		{
+			name: "incorrect label marked to remove",
+			hostConfig: []kubeoneapi.HostConfig{
+				{
+					PublicAddress:     "192.168.1.1",
+					PrivateAddress:    "192.168.0.1",
+					SSHPrivateKeyFile: "test",
+					SSHAgentSocket:    "test",
+					SSHUsername:       "root",
+					Labels: map[string]string{
+						"label-to-remove-": "this values has to be empty",
+					},
+				},
+			},
+			expectedError: true,
+		},
+		{
+			name: "correct label marked to remove",
+			hostConfig: []kubeoneapi.HostConfig{
+				{
+					PublicAddress:     "192.168.1.1",
+					PrivateAddress:    "192.168.0.1",
+					SSHPrivateKeyFile: "test",
+					SSHAgentSocket:    "test",
+					SSHUsername:       "root",
+					Labels: map[string]string{
+						"label-to-remove-": "",
+					},
+				},
+			},
+			expectedError: false,
 		},
 	}
 

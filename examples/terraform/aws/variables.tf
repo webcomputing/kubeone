@@ -39,6 +39,7 @@ variable "worker_os" {
   # * flatcar
   # * rhel
   # * amzn2
+  # * rockylinux
   default = ""
   type    = string
 }
@@ -57,7 +58,7 @@ variable "ssh_port" {
 
 variable "ssh_username" {
   description = "SSH user, used only in output"
-  default     = "ubuntu"
+  default     = ""
   type        = string
 }
 
@@ -81,8 +82,24 @@ variable "bastion_port" {
 
 variable "bastion_user" {
   description = "Bastion SSH username"
-  default     = "ubuntu"
+  default     = ""
   type        = string
+}
+
+variable "control_plane_labels" {
+  description = "custom labels to add (and remove) to control plane"
+  type        = map(string)
+  default = {
+    "custom-label-to-add" = "custom-value"
+    # note the minus symbol suffix
+    "custom-label-to-remove-" = ""
+  }
+}
+
+variable "disable_kubeapi_loadbalancer" {
+  type        = bool
+  default     = false
+  description = "E2E tests specific varible to disable usage of any loadbalancer in front of kubeapi-server"
 }
 
 # Provider specific settings
@@ -131,7 +148,8 @@ variable "os" {
   # * centos
   # * rhel
   # * flatcar
-  # * amzn2
+  # * amzn
+  # * rockylinux
   default = "ubuntu"
   type    = string
 }
@@ -145,39 +163,59 @@ variable "ami" {
 variable "ami_filters" {
   description = "map with AMI filters"
   type = map(object({
-    owners     = list(string)
-    image_name = list(string)
-    osp_name   = string
+    owners       = list(string)
+    image_name   = list(string)
+    osp_name     = string
+    ssh_username = string
+    worker_os    = string
   }))
   default = {
     ubuntu = {
-      owners     = ["099720109477"] # Canonical
-      image_name = ["ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"]
-      osp_name   = "osp-ubuntu"
+      owners       = ["099720109477"] # Canonical
+      image_name   = ["ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"]
+      osp_name     = "osp-ubuntu"
+      ssh_username = "ubuntu"
+      worker_os    = "ubuntu"
     }
 
     centos = {
-      owners     = ["792107900819"] # RockyLinux
-      image_name = ["Rocky-8-ec2-*.x86_64"]
-      osp_name   = "osp-centos"
+      owners       = ["125523088429"]
+      image_name   = ["CentOS 8.* x86_64"]
+      osp_name     = "osp-centos8"
+      ssh_username = "centos"
+      worker_os    = "centos"
     }
 
     flatcar = {
-      owners     = ["075585003325"] # Kinvolk
-      image_name = ["Flatcar-stable-*-hvm"]
-      osp_name   = "osp-flatcar"
+      owners       = ["075585003325"] # Kinvolk
+      image_name   = ["Flatcar-stable-*-hvm"]
+      osp_name     = "osp-flatcar"
+      ssh_username = "core"
+      worker_os    = "flatcar"
     }
 
     rhel = {
-      owners     = ["309956199498"] # Red Hat
-      image_name = ["RHEL-8*_HVM-*-x86_64-*"]
-      osp_name   = "osp-rhel"
+      owners       = ["309956199498"] # Red Hat
+      image_name   = ["RHEL-8*_HVM-*-x86_64-*"]
+      osp_name     = "osp-rhel"
+      ssh_username = "ec2-user"
+      worker_os    = "rhel"
     }
 
-    amzn2 = {
-      owners     = ["137112412989"] # Amazon
-      image_name = ["amzn2-ami-hvm-2.0.*-x86_64-gp2"]
-      osp_name   = "osp-amzn2"
+    rockylinux = {
+      owners       = ["792107900819"] # RockyLinux
+      image_name   = ["Rocky-8-ec2-*.x86_64"]
+      osp_name     = "osp-rockylinux"
+      ssh_username = "rocky"
+      worker_os    = "rockylinux"
+    }
+
+    amzn = {
+      owners       = ["137112412989"] # Amazon
+      image_name   = ["amzn2-ami-hvm-2.0.*-x86_64-gp2"]
+      osp_name     = "osp-amzn2"
+      ssh_username = "ec2-user"
+      worker_os    = "amzn2"
     }
   }
 }
@@ -207,10 +245,11 @@ variable "static_workers_count" {
   type        = number
 }
 
-variable "initial_machinedeployment_spotinstances" {
-  description = "use spot instances for initial machine-deployment"
-  default     = false
-  type        = bool
+variable "initial_machinedeployment_spotinstances_max_price" {
+  description = "used to specify max spot instance price for initial machine-deployment"
+  # we intentionally set minimum max price to ensure that user specifies it explicitly
+  default = 0
+  type    = number
 }
 
 variable "worker_deploy_ssh_key" {
@@ -220,7 +259,16 @@ variable "worker_deploy_ssh_key" {
 }
 
 variable "control_plane_vm_count" {
-  description = "Number of control plane instances"
+  description = "number of control plane instances"
   default     = 3
   type        = number
+}
+
+variable "initial_machinedeployment_operating_system_profile" {
+  default     = ""
+  type        = string
+  description = <<EOF
+Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.
+If not specified default is used based on the OS specified for workers.
+EOF
 }

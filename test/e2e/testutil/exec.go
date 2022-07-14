@@ -17,6 +17,7 @@ limitations under the License.
 package testutil
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -50,20 +51,22 @@ type Exec struct {
 	Env     []string
 	Stderr  io.Writer
 	Stdout  io.Writer
+
+	dryRun bool
 }
 
 func (e *Exec) Run() error {
-	cmd := e.build()
+	cmd := e.BuildCmd(context.Background())
 
-	if e.Logf != nil {
-		e.Logf("%v", cmd.Args)
+	if e.dryRun {
+		return nil
 	}
 
 	return cmd.Run()
 }
 
-func (e *Exec) build() *exec.Cmd {
-	cmd := exec.Command(e.Command, e.Args...) //nolint:gosec
+func (e *Exec) BuildCmd(ctx context.Context) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, e.Command, e.Args...) //nolint:gosec
 	cmd.Dir = e.Cwd
 
 	if len(e.Env) != 0 {
@@ -77,6 +80,10 @@ func (e *Exec) build() *exec.Cmd {
 
 	if e.Stderr != nil {
 		cmd.Stderr = e.Stderr
+	}
+
+	if e.Logf != nil {
+		e.Logf("in dir: %s, %v", e.Cwd, cmd.Args)
 	}
 
 	return cmd
@@ -145,6 +152,14 @@ func WithEnvs(envs ...string) ExecOpt {
 	}
 }
 
+func WithDryRun() ExecOpt {
+	return func(e *Exec) *Exec {
+		e.dryRun = true
+
+		return e
+	}
+}
+
 func LogFunc(logf func(string, ...interface{})) ExecOpt {
 	return func(e *Exec) *Exec {
 		e.Logf = logf
@@ -155,7 +170,7 @@ func LogFunc(logf func(string, ...interface{})) ExecOpt {
 
 func DebugTo(w io.Writer) ExecOpt {
 	return LogFunc(func(format string, a ...interface{}) {
-		fmt.Fprintf(w, "\n +"+format+"\n", a)
+		fmt.Fprintf(w, "\n +"+format+"\n", a...)
 	})
 }
 

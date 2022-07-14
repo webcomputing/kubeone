@@ -38,7 +38,7 @@ const (
 	// lowerVersionConstraint defines a semver constraint that validates Kubernetes versions against a lower bound
 	lowerVersionConstraint = ">= 1.20"
 	// upperVersionConstraint defines a semver constraint that validates Kubernetes versions against an upper bound
-	upperVersionConstraint = "<= 1.23"
+	upperVersionConstraint = "<= 1.24"
 )
 
 var (
@@ -224,6 +224,15 @@ func ValidateCloudProviderSpec(p kubeoneapi.CloudProviderSpec, fldPath *field.Pa
 		}
 		providerFound = true
 	}
+	if p.VMwareCloudDirector != nil {
+		if providerFound {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("vmwareCloudDirector"), "only one provider can be used at the same time"))
+		}
+		providerFound = true
+		if p.External {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("external"), "external cloud provider is not supported for VMware Cloud Director clusters"))
+		}
+	}
 	if p.Vsphere != nil {
 		if providerFound {
 			allErrs = append(allErrs, field.Forbidden(fldPath.Child("vsphere"), "only one provider can be used at the same time"))
@@ -298,21 +307,8 @@ func ValidateKubernetesSupport(c kubeoneapi.KubeOneCluster, fldPath *field.Path)
 		return append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, ".versions.kubernetes is not a semver string"))
 	}
 
-	if v.Minor() >= 23 {
-		switch {
-		case c.CloudProvider.Vsphere != nil:
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, "kubernetes versions 1.23.0 and newer are currently not supported for vsphere clusters"))
-		case c.ClusterNetwork.KubeProxy != nil && c.ClusterNetwork.KubeProxy.IPVS != nil:
-			if c.ClusterNetwork.CNI != nil && c.ClusterNetwork.CNI.Canal != nil {
-				allErrs = append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, "kubernetes versions 1.23.0 and newer are currently not supported for clusters running kube-proxy in ipvs mode with Canal CNI"))
-			} else if c.ClusterNetwork.CNI != nil && c.ClusterNetwork.CNI.External != nil && c.Addons != nil {
-				for _, addon := range c.Addons.Addons {
-					if addon.Name == "calico-vxlan" {
-						allErrs = append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, "kubernetes versions 1.23.0 and newer are currently not supported for clusters running kube-proxy in ipvs mode with Calico CNI"))
-					}
-				}
-			}
-		}
+	if v.Minor() >= 25 && c.CloudProvider.Vsphere != nil {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("versions").Child("kubernetes"), c.Versions.Kubernetes, "kubernetes versions 1.25.0 and newer are currently not supported for vsphere clusters"))
 	}
 
 	return allErrs
@@ -456,6 +452,9 @@ func ValidateDynamicWorkerConfig(workerset []kubeoneapi.DynamicWorkerConfig, fld
 		if w.Replicas == nil || *w.Replicas < 0 {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("replicas"), w.Replicas, ".dynamicWorkers.replicas must be specified and >= 0"))
 		}
+		if len(w.Config.MachineAnnotations) > 0 && len(w.Config.NodeAnnotations) > 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("machineAnnotations"), w.Config.MachineAnnotations, "machineAnnotations has been replaced with nodeAnnotations, only one of those two can be set"))
+		}
 	}
 
 	return allErrs
@@ -594,6 +593,14 @@ func ValidateHostConfig(hosts []kubeoneapi.HostConfig, fldPath *field.Path) fiel
 		}
 		if !h.OperatingSystem.IsValid() {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("operatingSystem"), h.OperatingSystem, "invalid operatingSystem provided"))
+		}
+		if h.Kubelet.MaxPods != nil && *h.Kubelet.MaxPods <= 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("kubelet").Child("maxPods"), h.Kubelet.MaxPods, "maxPods must be a positive number"))
+		}
+		for labelKey, labelValue := range h.Labels {
+			if strings.HasSuffix(labelKey, "-") && labelValue != "" {
+				allErrs = append(allErrs, field.Invalid(fldPath.Child("labels"), labelValue, "label to remove cannot have value"))
+			}
 		}
 	}
 

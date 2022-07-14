@@ -19,6 +19,7 @@ package scripts
 import (
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
 	"k8c.io/kubeone/pkg/containerruntime"
+	"k8c.io/kubeone/pkg/fail"
 )
 
 const (
@@ -31,7 +32,7 @@ sudo systemctl disable --now firewalld || true
 
 source /etc/kubeone/proxy-env
 
-{{ template "sysctl-k8s" }}
+{{ template "sysctl-k8s" . }}
 {{ template "journald-config" }}
 
 yum_proxy=""
@@ -116,6 +117,9 @@ sudo yum remove -y \
 	kubeadm \
 	kubectl
 sudo yum remove -y kubernetes-cni || true
+sudo rm -rf /opt/cni
+sudo rm -f /etc/systemd/system/kubelet.service /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+sudo systemctl daemon-reload
 `
 	disableNMCloudSetup = `
 if systemctl status 'nm-cloud-setup.timer' 2> /dev/null | grep -Fq "Active: active"; then
@@ -145,17 +149,22 @@ func KubeadmCentOS(cluster *kubeoneapi.KubeOneCluster, force bool) (string, erro
 		"INSTALL_DOCKER":         cluster.ContainerRuntime.Docker,
 		"INSTALL_CONTAINERD":     cluster.ContainerRuntime.Containerd,
 		"INSTALL_ISCSI_AND_NFS":  installISCSIAndNFS(cluster),
+		"CILIUM":                 ciliumCNI(cluster),
 	}
 
 	if err := containerruntime.UpdateDataMap(cluster, data); err != nil {
 		return "", err
 	}
 
-	return Render(kubeadmCentOSTemplate, data)
+	result, err := Render(kubeadmCentOSTemplate, data)
+
+	return result, fail.Runtime(err, "rendering kubeadmCentOSTemplate script")
 }
 
 func RemoveBinariesCentOS() (string, error) {
-	return Render(removeBinariesCentOSScriptTemplate, Data{})
+	result, err := Render(removeBinariesCentOSScriptTemplate, Data{})
+
+	return result, fail.Runtime(err, "rendering removeBinariesCentOSScriptTemplate script")
 }
 
 func UpgradeKubeadmAndCNICentOS(cluster *kubeoneapi.KubeOneCluster) (string, error) {
@@ -174,13 +183,16 @@ func UpgradeKubeadmAndCNICentOS(cluster *kubeoneapi.KubeOneCluster) (string, err
 		"INSTALL_DOCKER":         cluster.ContainerRuntime.Docker,
 		"INSTALL_CONTAINERD":     cluster.ContainerRuntime.Containerd,
 		"INSTALL_ISCSI_AND_NFS":  installISCSIAndNFS(cluster),
+		"CILIUM":                 ciliumCNI(cluster),
 	}
 
 	if err := containerruntime.UpdateDataMap(cluster, data); err != nil {
 		return "", err
 	}
 
-	return Render(kubeadmCentOSTemplate, data)
+	result, err := Render(kubeadmCentOSTemplate, data)
+
+	return result, fail.Runtime(err, "rendering kubeadmCentOSTemplate script")
 }
 
 func UpgradeKubeletAndKubectlCentOS(cluster *kubeoneapi.KubeOneCluster) (string, error) {
@@ -200,15 +212,20 @@ func UpgradeKubeletAndKubectlCentOS(cluster *kubeoneapi.KubeOneCluster) (string,
 		"INSTALL_DOCKER":         cluster.ContainerRuntime.Docker,
 		"INSTALL_CONTAINERD":     cluster.ContainerRuntime.Containerd,
 		"INSTALL_ISCSI_AND_NFS":  installISCSIAndNFS(cluster),
+		"CILIUM":                 ciliumCNI(cluster),
 	}
 
 	if err := containerruntime.UpdateDataMap(cluster, data); err != nil {
 		return "", err
 	}
 
-	return Render(kubeadmCentOSTemplate, data)
+	result, err := Render(kubeadmCentOSTemplate, data)
+
+	return result, fail.Runtime(err, "rendering kubeadmCentOSTemplate script")
 }
 
 func DisableNMCloudSetup() (string, error) {
-	return Render(disableNMCloudSetup, nil)
+	result, err := Render(disableNMCloudSetup, nil)
+
+	return result, fail.Runtime(err, "rendering disableNMCloudSetup script")
 }

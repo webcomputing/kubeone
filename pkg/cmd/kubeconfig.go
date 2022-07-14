@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"github.com/MakeNowJust/heredoc/v2"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -38,11 +37,12 @@ func kubeconfigCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 			This command takes KubeOne manifest which contains information about hosts. It's possible to source information about
 			hosts from Terraform output, using the '--tfjson' flag.
 		`),
-		Example: `kubeone kubeconfig -m mycluster.yaml -t terraformoutput.json`,
+		Example:       `kubeone kubeconfig -m mycluster.yaml -t terraformoutput.json`,
+		SilenceErrors: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			gopts, err := persistentGlobalOptions(rootFlags)
 			if err != nil {
-				return errors.Wrap(err, "unable to get global flags")
+				return err
 			}
 
 			return runKubeconfig(gopts)
@@ -56,7 +56,7 @@ func kubeconfigCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 func runKubeconfig(opts *globalOptions) error {
 	s, err := opts.BuildState()
 	if err != nil {
-		return errors.Wrap(err, "failed to initialize State")
+		return err
 	}
 
 	konfig, err := kubeconfig.Download(s)

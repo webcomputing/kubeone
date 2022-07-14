@@ -22,7 +22,8 @@ import (
 
 	"github.com/MakeNowJust/heredoc/v2"
 	"github.com/Masterminds/sprig/v3"
-	"github.com/pkg/errors"
+
+	"k8c.io/kubeone/pkg/fail"
 )
 
 var (
@@ -82,6 +83,10 @@ var (
 			{{ template "container-runtime-daemon-config" . }}
 			{{ template "containerd-systemd-setup" . -}}
 			sudo systemctl enable --now docker
+			if systemctl status kubelet 2>&1 > /dev/null; then
+				sudo systemctl restart kubelet
+				sleep 10
+			fi
 			`,
 			defaultDockerVersion,
 			latestDockerVersion,
@@ -103,10 +108,14 @@ var (
 			{{ template "container-runtime-daemon-config" . }}
 			{{ template "containerd-systemd-setup" . -}}
 			sudo systemctl enable --now docker
+			if systemctl status kubelet 2>&1 > /dev/null; then
+				sudo systemctl restart kubelet
+				sleep 10
+			fi
 		`,
 			defaultDockerVersion,
 			latestDockerVersion,
-			defaultContainerdVersion,
+			defaultAmazonContainerdVersion,
 		),
 
 		"yum-docker-ce": heredoc.Docf(`
@@ -131,6 +140,10 @@ var (
 			{{ template "container-runtime-daemon-config" . }}
 			{{ template "containerd-systemd-setup" . -}}
 			sudo systemctl enable --now docker
+			if systemctl status kubelet 2>&1 > /dev/null; then
+				sudo systemctl restart kubelet
+				sleep 10
+			fi
 			`,
 			defaultDockerVersion,
 			latestDockerVersion,
@@ -147,7 +160,14 @@ var (
 			{{ end }}
 
 			sudo apt-mark unhold containerd.io || true
-			sudo apt-get install -y containerd.io=%s
+			sudo DEBIAN_FRONTEND=noninteractive apt-get install \
+				--option "Dpkg::Options::=--force-confold" \
+				--no-install-recommends \
+				{{- if .FORCE }}
+				--allow-downgrades \
+				{{- end }}
+				-y \
+				containerd.io=%s
 			sudo apt-mark hold containerd.io
 
 			{{ template "container-runtime-daemon-config" . }}
@@ -200,6 +220,10 @@ var (
 			sudo systemctl daemon-reload
 			sudo systemctl enable --now docker
 			sudo systemctl restart docker
+			if systemctl status kubelet 2>&1 > /dev/null; then
+				sudo systemctl restart kubelet
+				sleep 10
+			fi			
 			`,
 		),
 
@@ -225,28 +249,28 @@ func Render(cmd string, variables map[string]interface{}) (string, error) {
 
 	_, err := tpl.New("library").Parse(libraryTemplate)
 	if err != nil {
-		return "", err
+		return "", fail.Runtime(err, "parsing library template")
 	}
 
 	for tplName, tplBody := range containerRuntimeTemplates {
 		_, err = tpl.New(tplName).Parse(tplBody)
 		if err != nil {
-			return "", err
+			return "", fail.Runtime(err, "parsing %s template", tplName)
 		}
 	}
 
 	_, err = tpl.Parse(cmd)
 	if err != nil {
-		return "", errors.Wrap(err, "failed to parse script template")
+		return "", fail.Runtime(err, "parsing command template")
 	}
 
 	var buf strings.Builder
-	buf.WriteString("set -xeu pipefail\n")
+	buf.WriteString("set -xeuo pipefail\n")
 	buf.WriteString(`export "PATH=$PATH:/sbin:/usr/local/bin:/opt/bin"`)
 	buf.WriteString("\n")
 
 	if err := tpl.Execute(&buf, variables); err != nil {
-		return "", errors.Wrap(err, "failed to render script template")
+		return "", fail.Runtime(err, "rendering template")
 	}
 
 	return buf.String(), nil

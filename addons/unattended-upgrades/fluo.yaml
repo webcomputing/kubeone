@@ -282,6 +282,9 @@ spec:
         securityContext:
           runAsUser: 0
       tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
       - key: node-role.kubernetes.io/master
         operator: Exists
         effect: NoSchedule
@@ -310,6 +313,8 @@ kind: Deployment
 metadata:
   name: flatcar-linux-update-operator
   namespace: reboot-coordinator
+  labels:
+    app: flatcar-linux-update-operator
 spec:
   replicas: 1
   selector:
@@ -346,6 +351,9 @@ spec:
             fieldRef:
               fieldPath: metadata.namespace
       tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
       - key: node-role.kubernetes.io/master
         operator: Exists
         effect: NoSchedule
@@ -388,6 +396,8 @@ spec:
                 values:
                 - flatcar
       tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        effect: NoSchedule
       - key: node-role.kubernetes.io/master
         effect: NoSchedule
       hostPID: true

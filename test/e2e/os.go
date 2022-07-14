@@ -26,13 +26,15 @@ import (
 type OperatingSystem string
 
 const (
-	OperatingSystemUbuntu  OperatingSystem = "ubuntu"
-	OperatingSystemCentOS7 OperatingSystem = "centos7"
-	OperatingSystemCentOS8 OperatingSystem = "centos"
-	OperatingSystemFlatcar OperatingSystem = "flatcar"
-	OperatingSystemAmazon  OperatingSystem = "amzn2"
-	OperatingSystemRHEL    OperatingSystem = "rhel"
-	OperatingSystemDefault OperatingSystem = ""
+	OperatingSystemUbuntu     OperatingSystem = "ubuntu"
+	OperatingSystemCentOS7    OperatingSystem = "centos7"
+	OperatingSystemCentOS8    OperatingSystem = "centos"
+	OperatingSystemFlatcar    OperatingSystem = "flatcar"
+	OperatingSystemAmazon     OperatingSystem = "amzn"
+	OperatingSystemAmazonMC   OperatingSystem = "amzn2"
+	OperatingSystemRHEL       OperatingSystem = "rhel"
+	OperatingSystemRockyLinux OperatingSystem = "rockylinux"
+	OperatingSystemDefault    OperatingSystem = ""
 )
 
 const (
@@ -46,7 +48,9 @@ func ValidateOperatingSystem(osName string) error {
 		OperatingSystemCentOS7,
 		OperatingSystemCentOS8,
 		OperatingSystemAmazon,
+		OperatingSystemAmazonMC,
 		OperatingSystemRHEL,
+		OperatingSystemRockyLinux,
 		OperatingSystemDefault:
 		return nil
 	}
@@ -57,42 +61,20 @@ func ValidateOperatingSystem(osName string) error {
 // ControlPlaneImageFlags returns Terraform flags for control plane image and SSH username
 func ControlPlaneImageFlags(provider string, osName OperatingSystem) ([]string, error) {
 	if provider == provisioner.AWS {
-		user, err := sshUsername(osName)
-		if err != nil {
-			return nil, err
-		}
-
 		switch {
 		case osName == OperatingSystemCentOS7:
 			return []string{
 				"-var", fmt.Sprintf("ami=%s", AWSCentOS7AMI),
-				"-var", fmt.Sprintf("ssh_username=%s", user),
-				"-var", fmt.Sprintf("bastion_user=%s", user),
+				"-var", "os=centos",
+				"-var", "ssh_username=centos",
+				"-var", "bastion_user=centos",
 			}, nil
 		default:
 			return []string{
 				"-var", fmt.Sprintf("os=%s", osName),
-				"-var", fmt.Sprintf("ssh_username=%s", user),
-				"-var", fmt.Sprintf("bastion_user=%s", user),
 			}, nil
 		}
 	}
 
 	return nil, errors.New("custom operating system is not supported for selected provider")
-}
-
-func sshUsername(osName OperatingSystem) (string, error) {
-	switch osName {
-	case OperatingSystemUbuntu:
-		return "ubuntu", nil
-	case OperatingSystemCentOS7, OperatingSystemCentOS8:
-		return "centos", nil
-	case OperatingSystemFlatcar:
-		return "core", nil
-	case OperatingSystemRHEL, OperatingSystemAmazon:
-		return "ec2-user", nil
-	case OperatingSystemDefault:
-	}
-
-	return "", errors.New("operating system not matched")
 }

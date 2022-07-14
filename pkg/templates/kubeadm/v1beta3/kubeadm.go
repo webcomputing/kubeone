@@ -19,31 +19,39 @@ package v1beta3
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
-	"github.com/pkg/errors"
 
 	bootstraptokenv1 "k8c.io/kubeone/pkg/apis/kubeadm/bootstraptoken/v1"
 	kubeadmv1beta3 "k8c.io/kubeone/pkg/apis/kubeadm/v1beta3"
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
 	"k8c.io/kubeone/pkg/certificate"
+	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/features"
 	"k8c.io/kubeone/pkg/kubeflags"
+	"k8c.io/kubeone/pkg/semverutil"
 	"k8c.io/kubeone/pkg/state"
 	"k8c.io/kubeone/pkg/templates/kubeadm/kubeadmargs"
-	"k8c.io/kubeone/pkg/templates/resources"
+	"k8c.io/kubeone/pkg/templates/kubernetesconfigs"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	componentbasev1alpha1 "k8s.io/component-base/config/v1alpha1"
-	kubeproxyv1alpha1 "k8s.io/kube-proxy/config/v1alpha1"
-	kubeletconfigv1beta1 "k8s.io/kubelet/config/v1beta1"
 )
 
 const (
 	bootstrapTokenTTL = 60 * time.Minute
+)
+
+const (
+	// greaterOrEqualThan122 defines a version constraint for the Kubernetes 1.22+ clusters
+	greaterOrEqualThan122 = ">= 1.22.0"
+)
+
+var (
+	etcdIntegrityCheckConstraint = semverutil.MustParseConstraint(greaterOrEqualThan122)
 )
 
 // NewConfig returns all required configs to init a cluster via a set of v1beta3 configs
@@ -51,8 +59,10 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 	cluster := s.Cluster
 	kubeSemVer, err := semver.NewVersion(cluster.Versions.Kubernetes)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to parse generate config, wrong kubernetes version %s", cluster.Versions.Kubernetes)
+		return nil, fail.Config(err, "parsing kubernetes semver")
 	}
+
+	etcdImageTag, etcdExtraArgs := etcdVersionCorruptCheckExtraArgs(kubeSemVer, cluster.AssetConfiguration.Etcd.ImageTag)
 
 	nodeRegistration := newNodeRegistration(s, host)
 	nodeRegistration.IgnorePreflightErrors = []string{
@@ -63,7 +73,7 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 
 	bootstrapToken, err := bootstraptokenv1.NewBootstrapTokenString(s.JoinToken)
 	if err != nil {
-		return nil, err
+		return nil, fail.Runtime(err, "generating kubeadm bootstrap token")
 	}
 
 	controlPlaneEndpoint := fmt.Sprintf("%s:%d", cluster.APIEndpoint.Host, cluster.APIEndpoint.Port)
@@ -148,8 +158,9 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 			Local: &kubeadmv1beta3.LocalEtcd{
 				ImageMeta: kubeadmv1beta3.ImageMeta{
 					ImageRepository: cluster.AssetConfiguration.Etcd.ImageRepository,
-					ImageTag:        cluster.AssetConfiguration.Etcd.ImageTag,
+					ImageTag:        etcdImageTag,
 				},
+				ExtraArgs: etcdExtraArgs,
 			},
 		},
 		DNS: kubeadmv1beta3.DNS{
@@ -158,27 +169,6 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 				ImageTag:        cluster.AssetConfiguration.CoreDNS.ImageTag,
 			},
 		},
-	}
-
-	bfalse := false
-	kubeletConfig := &kubeletconfigv1beta1.KubeletConfiguration{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "kubelet.config.k8s.io/v1beta1",
-			Kind:       "KubeletConfiguration",
-		},
-		CgroupDriver:         "systemd",
-		ReadOnlyPort:         0,
-		RotateCertificates:   true,
-		ServerTLSBootstrap:   true,
-		ClusterDNS:           []string{resources.NodeLocalDNSVirtualIP},
-		ContainerLogMaxSize:  cluster.LoggingConfig.ContainerLogMaxSize,
-		ContainerLogMaxFiles: &cluster.LoggingConfig.ContainerLogMaxFiles,
-		Authentication: kubeletconfigv1beta1.KubeletAuthentication{
-			Anonymous: kubeletconfigv1beta1.KubeletAnonymousAuthentication{
-				Enabled: &bfalse,
-			},
-		},
-		FeatureGates: map[string]bool{},
 	}
 
 	if cluster.AssetConfiguration.Pause.ImageRepository != "" {
@@ -216,6 +206,11 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 		}
 	}
 
+	var (
+		kubeletFeatureGates map[string]bool
+		featureGatesFlag    string
+	)
+
 	if cluster.CloudProvider.External {
 		if !s.ShouldEnableInTreeCloudProvider() {
 			delete(clusterConfig.APIServer.ExtraArgs, "cloud-provider")
@@ -230,7 +225,7 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 		}
 
 		if s.ShouldEnableCSIMigration() {
-			featureGates, featureGatesFlag, err := s.Cluster.CSIMigrationFeatureGates(s.ShouldUnregisterInTreeCloudProvider())
+			kubeletFeatureGates, featureGatesFlag, err = s.Cluster.CSIMigrationFeatureGates(s.ShouldUnregisterInTreeCloudProvider())
 			if err != nil {
 				return nil, err
 			}
@@ -247,11 +242,6 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 				clusterConfig.ControllerManager.ExtraArgs["feature-gates"] = fmt.Sprintf("%s,%s", clusterConfig.ControllerManager.ExtraArgs["feature-gates"], featureGatesFlag)
 			} else {
 				clusterConfig.ControllerManager.ExtraArgs["feature-gates"] = featureGatesFlag
-			}
-
-			// Kubelet
-			for k, v := range featureGates {
-				kubeletConfig.FeatureGates[k] = v
 			}
 		}
 	}
@@ -300,9 +290,9 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 		// Handle external KMS case.
 		if s.LiveCluster.CustomEncryptionEnabled() ||
 			s.Cluster.Features.EncryptionProviders != nil && s.Cluster.Features.EncryptionProviders.CustomEncryptionConfiguration != "" {
-			ksmSocket, err := s.GetKMSSocketPath()
-			if err != nil {
-				return nil, err
+			ksmSocket, socketErr := s.GetKMSSocketPath()
+			if socketErr != nil {
+				return nil, socketErr
 			}
 			if ksmSocket != "" {
 				clusterConfig.APIServer.ExtraVolumes = append(clusterConfig.APIServer.ExtraVolumes, kubeadmv1beta3.HostPathMount{
@@ -324,7 +314,15 @@ func NewConfig(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Object, er
 	initConfig.NodeRegistration = nodeRegistration
 	joinConfig.NodeRegistration = nodeRegistration
 
-	kubeproxyConfig := kubeProxyConfiguration(s)
+	kubeletConfig, err := kubernetesconfigs.NewKubeletConfiguration(s.Cluster, kubeletFeatureGates)
+	if err != nil {
+		return nil, err
+	}
+
+	kubeproxyConfig, err := kubernetesconfigs.NewKubeProxyConfiguration(s.Cluster)
+	if err != nil {
+		return nil, err
+	}
 
 	return []runtime.Object{initConfig, joinConfig, clusterConfig, kubeletConfig, kubeproxyConfig}, nil
 }
@@ -354,27 +352,6 @@ func NewConfigWorker(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Obje
 		},
 	}
 
-	bfalse := false
-	kubeletConfig := &kubeletconfigv1beta1.KubeletConfiguration{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "kubelet.config.k8s.io/v1beta1",
-			Kind:       "KubeletConfiguration",
-		},
-		CgroupDriver:         "systemd",
-		ReadOnlyPort:         0,
-		RotateCertificates:   true,
-		ServerTLSBootstrap:   true,
-		ClusterDNS:           []string{resources.NodeLocalDNSVirtualIP},
-		ContainerLogMaxSize:  cluster.LoggingConfig.ContainerLogMaxSize,
-		ContainerLogMaxFiles: &cluster.LoggingConfig.ContainerLogMaxFiles,
-		Authentication: kubeletconfigv1beta1.KubeletAuthentication{
-			Anonymous: kubeletconfigv1beta1.KubeletAnonymousAuthentication{
-				Enabled: &bfalse,
-			},
-		},
-		FeatureGates: map[string]bool{},
-	}
-
 	if cluster.AssetConfiguration.Pause.ImageRepository != "" {
 		nodeRegistration.KubeletExtraArgs["pod-infra-container-image"] = cluster.AssetConfiguration.Pause.ImageRepository + "/pause:" + cluster.AssetConfiguration.Pause.ImageTag
 	}
@@ -390,22 +367,11 @@ func NewConfigWorker(s *state.State, host kubeoneapi.HostConfig) ([]runtime.Obje
 		if !s.ShouldEnableInTreeCloudProvider() {
 			nodeRegistration.KubeletExtraArgs["cloud-provider"] = "external"
 		}
-		if s.ShouldEnableCSIMigration() {
-			featureGates, _, err := s.Cluster.CSIMigrationFeatureGates(s.ShouldUnregisterInTreeCloudProvider())
-			if err != nil {
-				return nil, err
-			}
-			for k, v := range featureGates {
-				kubeletConfig.FeatureGates[k] = v
-			}
-		}
 	}
 
 	joinConfig.NodeRegistration = nodeRegistration
 
-	kubeproxyConfig := kubeProxyConfiguration(s)
-
-	return []runtime.Object{joinConfig, kubeletConfig, kubeproxyConfig}, nil
+	return []runtime.Object{joinConfig}, nil
 }
 
 func newNodeIP(host kubeoneapi.HostConfig) string {
@@ -434,6 +400,9 @@ func newNodeRegistration(s *state.State, host kubeoneapi.HostConfig) kubeadmv1be
 	if m := host.Kubelet.EvictionHard; m != nil {
 		kubeletCLIFlags["eviction-hard"] = kubeoneapi.MapStringStringToString(m, "<")
 	}
+	if m := host.Kubelet.MaxPods; m != nil {
+		kubeletCLIFlags["max-pods"] = strconv.Itoa(int(*m))
+	}
 
 	return kubeadmv1beta3.NodeRegistrationOptions{
 		Name:             host.Hostname,
@@ -443,34 +412,19 @@ func newNodeRegistration(s *state.State, host kubeoneapi.HostConfig) kubeadmv1be
 	}
 }
 
-func kubeProxyConfiguration(s *state.State) *kubeproxyv1alpha1.KubeProxyConfiguration {
-	kubeProxyConfig := &kubeproxyv1alpha1.KubeProxyConfiguration{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "KubeProxyConfiguration",
-			APIVersion: "kubeproxy.config.k8s.io/v1alpha1",
-		},
-		ClusterCIDR: s.Cluster.ClusterNetwork.PodSubnet,
-		ClientConnection: componentbasev1alpha1.ClientConnectionConfiguration{
-			Kubeconfig: "/var/lib/kube-proxy/kubeconfig.conf",
-		},
-	}
-
-	if kbPrx := s.Cluster.ClusterNetwork.KubeProxy; kbPrx != nil {
-		switch {
-		case kbPrx.IPVS != nil:
-			kubeProxyConfig.Mode = kubeproxyv1alpha1.ProxyMode("ipvs")
-			kubeProxyConfig.IPVS = kubeproxyv1alpha1.KubeProxyIPVSConfiguration{
-				StrictARP:     kbPrx.IPVS.StrictARP,
-				Scheduler:     kbPrx.IPVS.Scheduler,
-				ExcludeCIDRs:  kbPrx.IPVS.ExcludeCIDRs,
-				TCPTimeout:    kbPrx.IPVS.TCPTimeout,
-				TCPFinTimeout: kbPrx.IPVS.TCPFinTimeout,
-				UDPTimeout:    kbPrx.IPVS.UDPTimeout,
-			}
-		case kbPrx.IPTables != nil:
-			kubeProxyConfig.Mode = kubeproxyv1alpha1.ProxyMode("iptables")
+func etcdVersionCorruptCheckExtraArgs(kubeSemVer *semver.Version, etcdImageTag string) (string, map[string]string) {
+	etcdExtraArgs := map[string]string{}
+	if etcdIntegrityCheckConstraint.Check(kubeSemVer) {
+		// This is required because etcd v3.5-[0-2] (used for Kubernetes 1.22+)
+		// has an issue with the data integrity.
+		// See https://groups.google.com/a/kubernetes.io/g/dev/c/B7gJs88XtQc/m/rSgNOzV2BwAJ
+		// for more details.
+		if etcdImageTag == "" {
+			etcdImageTag = "3.5.3-0"
 		}
+		etcdExtraArgs["experimental-initial-corrupt-check"] = "true"
+		etcdExtraArgs["experimental-corrupt-check-time"] = "240m"
 	}
 
-	return kubeProxyConfig
+	return etcdImageTag, etcdExtraArgs
 }

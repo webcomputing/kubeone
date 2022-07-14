@@ -19,6 +19,7 @@ package scripts
 import (
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
 	"k8c.io/kubeone/pkg/containerruntime"
+	"k8c.io/kubeone/pkg/fail"
 )
 
 const (
@@ -29,7 +30,7 @@ sudo systemctl disable --now ufw || true
 
 source /etc/kubeone/proxy-env
 
-{{ template "sysctl-k8s" }}
+{{ template "sysctl-k8s" . }}
 {{ template "journald-config" }}
 
 sudo mkdir -p /etc/apt/apt.conf.d
@@ -119,6 +120,9 @@ sudo apt-get remove --purge -y \
 	kubectl \
 	kubelet
 sudo apt-get remove --purge -y kubernetes-cni || true
+sudo rm -rf /opt/cni
+sudo rm -f /etc/systemd/system/kubelet.service /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+sudo systemctl daemon-reload
 `
 )
 
@@ -136,17 +140,22 @@ func KubeadmDebian(cluster *kubeoneapi.KubeOneCluster, force bool) (string, erro
 		"INSTALL_DOCKER":         cluster.ContainerRuntime.Docker,
 		"INSTALL_CONTAINERD":     cluster.ContainerRuntime.Containerd,
 		"INSTALL_ISCSI_AND_NFS":  installISCSIAndNFS(cluster),
+		"CILIUM":                 ciliumCNI(cluster),
 	}
 
 	if err := containerruntime.UpdateDataMap(cluster, data); err != nil {
 		return "", err
 	}
 
-	return Render(kubeadmDebianTemplate, data)
+	result, err := Render(kubeadmDebianTemplate, data)
+
+	return result, fail.Runtime(err, "rendering kubeadmDebianTemplate script")
 }
 
 func RemoveBinariesDebian() (string, error) {
-	return Render(removeBinariesDebianScriptTemplate, Data{})
+	result, err := Render(removeBinariesDebianScriptTemplate, Data{})
+
+	return result, fail.Runtime(err, "rendering removeBinariesDebianScriptTemplate script")
 }
 
 func UpgradeKubeadmAndCNIDebian(cluster *kubeoneapi.KubeOneCluster) (string, error) {
@@ -161,13 +170,16 @@ func UpgradeKubeadmAndCNIDebian(cluster *kubeoneapi.KubeOneCluster) (string, err
 		"INSTALL_DOCKER":         cluster.ContainerRuntime.Docker,
 		"INSTALL_CONTAINERD":     cluster.ContainerRuntime.Containerd,
 		"INSTALL_ISCSI_AND_NFS":  installISCSIAndNFS(cluster),
+		"CILIUM":                 ciliumCNI(cluster),
 	}
 
 	if err := containerruntime.UpdateDataMap(cluster, data); err != nil {
 		return "", err
 	}
 
-	return Render(kubeadmDebianTemplate, data)
+	result, err := Render(kubeadmDebianTemplate, data)
+
+	return result, fail.Runtime(err, "rendering kubeadmDebianTemplate script")
 }
 
 func UpgradeKubeletAndKubectlDebian(cluster *kubeoneapi.KubeOneCluster) (string, error) {
@@ -183,11 +195,14 @@ func UpgradeKubeletAndKubectlDebian(cluster *kubeoneapi.KubeOneCluster) (string,
 		"INSTALL_DOCKER":         cluster.ContainerRuntime.Docker,
 		"INSTALL_CONTAINERD":     cluster.ContainerRuntime.Containerd,
 		"INSTALL_ISCSI_AND_NFS":  installISCSIAndNFS(cluster),
+		"CILIUM":                 ciliumCNI(cluster),
 	}
 
 	if err := containerruntime.UpdateDataMap(cluster, data); err != nil {
 		return "", err
 	}
 
-	return Render(kubeadmDebianTemplate, data)
+	result, err := Render(kubeadmDebianTemplate, data)
+
+	return result, fail.Runtime(err, "rendering kubeadmDebianTemplate script")
 }

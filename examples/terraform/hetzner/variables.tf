@@ -36,6 +36,7 @@ variable "worker_os" {
   # valid choices are:
   # * ubuntu
   # * centos
+  # * rockylinux
   default = "ubuntu"
   type    = string
 }
@@ -70,6 +71,12 @@ variable "ssh_agent_socket" {
   type        = string
 }
 
+variable "disable_kubeapi_loadbalancer" {
+  type        = bool
+  default     = false
+  description = "E2E tests specific varible to disable usage of any loadbalancer in front of kubeapi-server"
+}
+
 # Provider specific settings
 
 variable "control_plane_type" {
@@ -87,9 +94,10 @@ variable "worker_type" {
   type    = string
 }
 
-variable "workers_replicas" {
-  default = 1
-  type    = number
+variable "initial_machinedeployment_replicas" {
+  description = "Number of replicas per MachineDeployment"
+  default     = 1
+  type        = number
 }
 
 variable "lb_type" {
@@ -117,4 +125,13 @@ variable "network_zone" {
   default     = "eu-central"
   description = "network zone to use for private network"
   type        = string
+}
+
+variable "initial_machinedeployment_operating_system_profile" {
+  default     = ""
+  type        = string
+  description = <<EOF
+Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.
+If not specified, the default value will be added by machine-controller addon.
+EOF
 }

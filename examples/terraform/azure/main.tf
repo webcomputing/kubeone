@@ -16,6 +16,12 @@ limitations under the License.
 
 provider "azurerm" {
   features {}
+  skip_provider_registration = true
+}
+
+locals {
+  kubeapi_endpoint   = var.disable_kubeapi_loadbalancer ? azurerm_network_interface.control_plane.0.private_ip_address : azurerm_public_ip.lbip.0.ip_address
+  loadbalancer_count = var.disable_kubeapi_loadbalancer ? 0 : 1
 }
 
 provider "time" {
@@ -127,6 +133,8 @@ resource "azurerm_network_security_group" "sg" {
 }
 
 resource "azurerm_public_ip" "lbip" {
+  count = local.loadbalancer_count
+
   name                = "${var.cluster_name}-lbip"
   location            = var.location
   resource_group_name = azurerm_resource_group.rg.name
@@ -153,13 +161,15 @@ resource "azurerm_public_ip" "control_plane" {
 }
 
 resource "azurerm_lb" "lb" {
+  count = local.loadbalancer_count
+
   resource_group_name = azurerm_resource_group.rg.name
   name                = "kubernetes"
   location            = var.location
 
   frontend_ip_configuration {
     name                 = "KubeApi"
-    public_ip_address_id = azurerm_public_ip.lbip.id
+    public_ip_address_id = azurerm_public_ip.lbip.0.id
   }
 
   tags = {
@@ -169,30 +179,34 @@ resource "azurerm_lb" "lb" {
 }
 
 resource "azurerm_lb_backend_address_pool" "backend_pool" {
-  loadbalancer_id = azurerm_lb.lb.id
+  count = local.loadbalancer_count
+
+  loadbalancer_id = azurerm_lb.lb.0.id
   name            = "ApiServers"
 }
 
 resource "azurerm_lb_rule" "lb_rule" {
-  resource_group_name            = azurerm_resource_group.rg.name
-  loadbalancer_id                = azurerm_lb.lb.id
+  count = local.loadbalancer_count
+
+  loadbalancer_id                = azurerm_lb.lb.0.id
   name                           = "LBRule"
-  protocol                       = "tcp"
+  protocol                       = "Tcp"
   frontend_port                  = 6443
   backend_port                   = 6443
   frontend_ip_configuration_name = "KubeApi"
   enable_floating_ip             = false
-  backend_address_pool_id        = azurerm_lb_backend_address_pool.backend_pool.id
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.backend_pool.0.id]
   idle_timeout_in_minutes        = 5
-  probe_id                       = azurerm_lb_probe.lb_probe.id
-  depends_on                     = [azurerm_lb_probe.lb_probe]
+  probe_id                       = azurerm_lb_probe.lb_probe.0.id
+  depends_on                     = [azurerm_lb_probe.lb_probe.0]
 }
 
 resource "azurerm_lb_probe" "lb_probe" {
-  resource_group_name = azurerm_resource_group.rg.name
-  loadbalancer_id     = azurerm_lb.lb.id
+  count = local.loadbalancer_count
+
+  loadbalancer_id     = azurerm_lb.lb.0.id
   name                = "tcpProbe"
-  protocol            = "tcp"
+  protocol            = "Tcp"
   port                = 6443
   interval_in_seconds = 5
   number_of_probes    = 2
@@ -218,7 +232,7 @@ resource "azurerm_network_interface_backend_address_pool_association" "control_p
 
   ip_configuration_name   = "${var.cluster_name}-cp-${count.index}"
   network_interface_id    = element(azurerm_network_interface.control_plane.*.id, count.index)
-  backend_address_pool_id = azurerm_lb_backend_address_pool.backend_pool.id
+  backend_address_pool_id = azurerm_lb_backend_address_pool.backend_pool.0.id
 }
 
 resource "azurerm_virtual_machine" "control_plane" {
@@ -235,8 +249,8 @@ resource "azurerm_virtual_machine" "control_plane" {
 
   storage_image_reference {
     publisher = "Canonical"
-    offer     = "UbuntuServer"
-    sku       = "18.04-LTS"
+    offer     = "0001-com-ubuntu-server-focal"
+    sku       = "20_04-lts"
     version   = "latest"
   }
 

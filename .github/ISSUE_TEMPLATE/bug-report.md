@@ -1,27 +1,69 @@
 ---
 name: Bug Report
-about: Report a bug related to KubeOne
+about: Report a bug related to Kubermatic KubeOne
 labels: sig/cluster-management, kind/bug
-
 ---
 
-<!-- Please use this template if you're reporting a bug. Try to provide as much information as possible. 
+### What happened?
 
-If you're reporting a security issue, please check the guidelines for reporting security issues https://github.com/kubermatic/kubeone/blob/master/CONTRIBUTING.md#reporting-a-security-vulnerability
+<!-- Try to provide as much information as possible.
+If you're reporting a security issue, please check the guidelines for reporting security issues:
+https://github.com/kubermatic/kubeone/blob/master/CONTRIBUTING.md#reporting-a-security-vulnerability -->
 
-Thanks!
--->
 
-**What happened**:
 
-**What is the expected behavior**:
+### Expected behavior
 
-**How to reproduce the issue**:
+<!-- What did you expected to happen? -->
 
-**Anything else we need to know?**
 
-**Information about the environment**:
-KubeOne version (`kubeone version`): 
-Operating system: 
-Provider you're deploying cluster on:
-Operating system you're deploying on:
+
+### How to reproduce the issue?
+
+<!-- Please provide as much information as possible, so we can reproduce the issue on our own. -->
+
+
+
+### What KubeOne version are you using?
+
+<!-- Please provide output of kubeone version here. -->
+
+<details>
+
+```console
+$ kubeone version
+# paste output here
+```
+
+</details>
+
+### Provide your KubeOneCluster manifest here (if applicable)
+
+<!-- Providing the KubeOneCluster manifest will help us reproduce the issue.
+Please make sure to redact all secrets (e.g. passwords, URLs...)! -->
+
+<details>
+
+```yaml
+# paste manifest here
+```
+
+</details>
+
+### What cloud provider are you running on?
+
+<!-- AWS, Azure, DigitalOcean, GCP, Hetzner Cloud, Nutanix, OpenStack, Equinix Metal (Packet), VMware vSphere, Other (e.g. baremetal or non-natively supported provider) -->
+
+
+
+### What operating system are you running in your cluster?
+
+<!-- Ubuntu 20.04, CentOS 7, Rocky Linux 8, Flatcar Linux, ... -->
+
+
+
+### Additional information
+
+<!-- Additional information about the bug you're reporting (optional). -->
+
+

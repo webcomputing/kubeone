@@ -18,6 +18,7 @@ package ssh
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -29,28 +30,16 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+
+	"k8c.io/kubeone/pkg/executor"
+	"k8c.io/kubeone/pkg/fail"
 )
 
 const socketEnvPrefix = "env:"
 
 var (
-	_ Tunneler = &connection{}
+	_ executor.Tunneler = &connection{}
 )
-
-// Connection represents an established connection to an SSH server.
-type Connection interface {
-	Exec(cmd string) (stdout string, stderr string, exitCode int, err error)
-	POpen(cmd string, stdin io.Reader, stdout io.Writer, stderr io.Writer) (exitCode int, err error)
-	io.Closer
-}
-
-// Tunneler interface creates net.Conn originating from the remote ssh host to
-// target `addr`
-type Tunneler interface {
-	// `network` can be tcp, tcp4, tcp6, unix
-	TunnelTo(ctx context.Context, network, addr string) (net.Conn, error)
-	io.Closer
-}
 
 // Opts represents all the possible options for connecting to
 // a remote server via SSH.
@@ -71,21 +60,21 @@ type Opts struct {
 
 func validateOptions(o Opts) (Opts, error) {
 	if len(o.Username) == 0 {
-		return o, errors.New("no username specified for SSH connection")
+		return o, fail.ConfigValidation(errors.New("no username specified for SSH connection"))
 	}
 
 	if len(o.Hostname) == 0 {
-		return o, errors.New("no hostname specified for SSH connection")
+		return o, fail.ConfigValidation(errors.New("no hostname specified for SSH connection"))
 	}
 
 	if len(o.Password) == 0 && len(o.PrivateKey) == 0 && len(o.KeyFile) == 0 && len(o.AgentSocket) == 0 {
-		return o, errors.New("must specify at least one of password, private key, keyfile or agent socket")
+		return o, fail.ConfigValidation(errors.New("must specify at least one of password, private key, keyfile or agent socket"))
 	}
 
 	if len(o.KeyFile) > 0 {
 		content, err := os.ReadFile(o.KeyFile)
 		if err != nil {
-			return o, errors.Wrapf(err, "failed to read keyfile %q", o.KeyFile)
+			return o, fail.Config(err, "reading SSH private key")
 		}
 
 		o.PrivateKey = string(content)
@@ -121,10 +110,10 @@ type connection struct {
 
 // NewConnection attempts to create a new SSH connection to the host
 // specified via the given options.
-func NewConnection(connector *Connector, o Opts) (Connection, error) {
+func NewConnection(connector *Connector, o Opts) (executor.Interface, error) {
 	o, err := validateOptions(o)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to validate ssh connection options")
+		return nil, err
 	}
 
 	authMethods := make([]ssh.AuthMethod, 0)
@@ -136,7 +125,10 @@ func NewConnection(connector *Connector, o Opts) (Connection, error) {
 	if len(o.PrivateKey) > 0 {
 		signer, parseErr := ssh.ParsePrivateKey([]byte(o.PrivateKey))
 		if parseErr != nil {
-			return nil, errors.Wrap(parseErr, "the given SSH key could not be parsed (note that password-protected keys are not supported)")
+			return nil, fail.SSHError{
+				Op:  "parsing private key",
+				Err: errors.Wrap(parseErr, "SSH key could not be parsed (note that password-protected keys are not supported)"),
+			}
 		}
 
 		authMethods = append(authMethods, ssh.PublicKeys(signer))
@@ -155,7 +147,10 @@ func NewConnection(connector *Connector, o Opts) (Connection, error) {
 
 		socket, dialErr := net.Dial("unix", addr)
 		if dialErr != nil {
-			return nil, errors.Wrapf(dialErr, "could not open socket %q", addr)
+			return nil, fail.SSHError{
+				Op:  "agent unix dialing",
+				Err: errors.Wrapf(dialErr, "could not open socket %q", addr),
+			}
 		}
 
 		agentClient := agent.NewClient(socket)
@@ -164,7 +159,17 @@ func NewConnection(connector *Connector, o Opts) (Connection, error) {
 		if signersErr != nil {
 			socket.Close()
 
-			return nil, errors.Wrap(signersErr, "error when creating signer for SSH agent")
+			return nil, fail.SSHError{
+				Op:  "creating signer for SSH agent",
+				Err: signersErr,
+			}
+		} else if len(signers) == 0 {
+			socket.Close()
+
+			return nil, fail.SSHError{
+				Err: errors.New("could not retrieve signers"),
+				Op:  "creating signer for SSH agent",
+			}
 		}
 
 		authMethods = append(authMethods, ssh.PublicKeys(signers...))
@@ -191,7 +196,7 @@ func NewConnection(connector *Connector, o Opts) (Connection, error) {
 
 	client, err := ssh.Dial("tcp", endpoint, sshConfig)
 	if err != nil {
-		return nil, errors.Wrapf(err, "could not establish connection to %s", endpoint)
+		return nil, fail.SSH(fail.Connection(err, endpoint), "dialing")
 	}
 
 	ctx, cancelFn := context.WithCancel(connector.ctx)
@@ -213,13 +218,13 @@ func NewConnection(connector *Connector, o Opts) (Connection, error) {
 	// Dial a connection to the service host, from the bastion
 	conn, err := client.Dial("tcp", endpointBehindBastion)
 	if err != nil {
-		return nil, errors.Wrapf(err, "could not establish connection to %s", endpointBehindBastion)
+		return nil, fail.SSH(fail.Connection(err, endpointBehindBastion), "dialing behind the bastion")
 	}
 
 	sshConfig.User = o.Username
 	ncc, chans, reqs, err := ssh.NewClientConn(conn, endpointBehindBastion, sshConfig)
 	if err != nil {
-		return nil, errors.Wrapf(err, "could not establish connection to %s", endpointBehindBastion)
+		return nil, fail.SSH(fail.Connection(err, endpointBehindBastion), "new client")
 	}
 
 	sshConn.sshclient = ssh.NewClient(ncc, chans, reqs)
@@ -232,14 +237,16 @@ func (c *connection) TunnelTo(_ context.Context, network, addr string) (net.Conn
 	// context that being passed. Please don't try to <-ctx.Done(), it will
 	// always return immediately
 	netconn, err := c.sshclient.Dial(network, addr)
-	if err == nil {
-		go func() {
-			<-c.ctx.Done()
-			netconn.Close()
-		}()
+	if err != nil {
+		return nil, fail.SSH(fail.Connection(err, addr), "tunneling")
 	}
 
-	return netconn, err
+	go func() {
+		<-c.ctx.Done()
+		netconn.Close()
+	}()
+
+	return netconn, nil
 }
 
 func (c *connection) Close() error {
@@ -260,7 +267,7 @@ func (c *connection) Close() error {
 func (c *connection) POpen(cmd string, stdin io.Reader, stdout io.Writer, stderr io.Writer) (int, error) {
 	sess, err := c.session()
 	if err != nil {
-		return 0, errors.Wrap(err, "failed to get SSH session")
+		return 0, err
 	}
 	defer sess.Close()
 
@@ -278,15 +285,30 @@ func (c *connection) POpen(cmd string, stdin io.Reader, stdout io.Writer, stderr
 	}
 
 	// preserve original error
-	return exitCode, err
+	return exitCode, fail.SSH(err, "popen")
 }
 
 func (c *connection) Exec(cmd string) (string, string, int, error) {
-	var stdoutBuf, stderrBuf strings.Builder
+	var (
+		stdoutBuf, stderrBuf strings.Builder
+		returnErr            error
+	)
 
 	exitCode, err := c.POpen(cmd, nil, &stdoutBuf, &stderrBuf)
 
-	return strings.TrimSpace(stdoutBuf.String()), stderrBuf.String(), exitCode, err
+	stdout := strings.TrimSpace(stdoutBuf.String())
+	stderr := stderrBuf.String()
+
+	if err != nil {
+		returnErr = fail.SSHError{
+			Err:    err,
+			Op:     "exec",
+			Stderr: stderr,
+			Cmd:    cmd,
+		}
+	}
+
+	return stdout, stderr, exitCode, returnErr
 }
 
 func (c *connection) session() (*ssh.Session, error) {
@@ -294,8 +316,13 @@ func (c *connection) session() (*ssh.Session, error) {
 	defer c.mu.Unlock()
 
 	if c.sshclient == nil {
-		return nil, errors.New("connection closed")
+		return nil, fail.SSH(fmt.Errorf("connection closed"), "session")
 	}
 
-	return c.sshclient.NewSession()
+	sess, err := c.sshclient.NewSession()
+	if err != nil {
+		return nil, fail.SSH(err, "new session")
+	}
+
+	return sess, nil
 }

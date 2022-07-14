@@ -21,6 +21,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"k8c.io/kubeone/pkg/fail"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -51,7 +53,7 @@ func (dr *drainer) Drain(ctx context.Context, nodeName string) error {
 		return err
 	}
 
-	return drain.RunNodeDrain(drainerHelper, nodeName)
+	return fail.KubeClient(drain.RunNodeDrain(drainerHelper, nodeName), "draining %q node", nodeName)
 }
 
 func (dr *drainer) Cordon(ctx context.Context, nodeName string, desired bool) error {
@@ -62,16 +64,21 @@ func (dr *drainer) Cordon(ctx context.Context, nodeName string, desired bool) er
 
 	node, err := drainerHelper.Client.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
-		return err
+		return fail.KubeClient(err, "getting Node %s", nodeName)
 	}
 
-	return drain.RunCordonOrUncordon(drainerHelper, node, desired)
+	op := "cordon Node %s"
+	if !desired {
+		op = "uncordon Node %s"
+	}
+
+	return fail.KubeClient(drain.RunCordonOrUncordon(drainerHelper, node, desired), op, nodeName)
 }
 
 func (dr *drainer) drainHelper(ctx context.Context) (*drain.Helper, error) {
 	kubeClinet, err := kubernetes.NewForConfig(dr.restconfig)
 	if err != nil {
-		return nil, err
+		return nil, fail.KubeClient(err, "initializing new kubernetes clientset")
 	}
 
 	return &drain.Helper{

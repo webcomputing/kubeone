@@ -20,45 +20,48 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/pkg/errors"
-
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
+	"k8c.io/kubeone/pkg/executor"
+	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/runner"
-	"k8c.io/kubeone/pkg/ssh"
+
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 )
 
 // NodeTask is a task that is specifically tailored to run on a single node.
-type NodeTask func(ctx *State, node *kubeoneapi.HostConfig, conn ssh.Connection) error
+type NodeTask func(ctx *State, node *kubeoneapi.HostConfig, conn executor.Interface) error
 
 func (s *State) runTask(node *kubeoneapi.HostConfig, task NodeTask) error {
 	var (
 		err  error
-		conn ssh.Connection
+		conn executor.Interface
 	)
 
 	// connect to the host (and do not close connection
 	// because we want to re-use it for future tasks)
-	conn, err = s.Connector.Connect(*node)
+	conn, err = s.Executor.Open(*node)
 	if err != nil {
-		return errors.Wrapf(err, "failed to connect to %s", node.PublicAddress)
+		return err
 	}
 
 	s.Runner = &runner.Runner{
-		Conn:    conn,
-		Verbose: s.Verbose,
-		OS:      node.OperatingSystem,
-		Prefix:  fmt.Sprintf("[%s] ", node.PublicAddress),
+		Executor: conn,
+		Verbose:  s.Verbose,
+		OS:       node.OperatingSystem,
+		Prefix:   fmt.Sprintf("[%s] ", node.PublicAddress),
 	}
 
-	return task(s, node, conn)
+	return fail.Runtime(task(s, node, conn), "")
 }
 
 // RunTaskOnNodes runs the given task on the given selection of hosts.
 func (s *State) RunTaskOnNodes(nodes []kubeoneapi.HostConfig, task NodeTask, parallel RunModeEnum) error {
-	var err error
+	var (
+		errorsLock    sync.Mutex
+		aggregateErrs []error
+	)
 
 	wg := sync.WaitGroup{}
-	hasErrors := false
 
 	for i := range nodes {
 		ctx := s.Clone()
@@ -67,16 +70,22 @@ func (s *State) RunTaskOnNodes(nodes []kubeoneapi.HostConfig, task NodeTask, par
 		if parallel == RunParallel {
 			wg.Add(1)
 			go func(ctx *State, node *kubeoneapi.HostConfig) {
-				err = ctx.runTask(node, task)
+				err := ctx.runTask(node, task)
 				if err != nil {
 					ctx.Logger.Error(err)
-					hasErrors = true
+
+					errorsLock.Lock()
+					defer errorsLock.Unlock()
+					aggregateErrs = append(aggregateErrs, fail.Runtime(err, "running task on %q", node.PublicAddress))
 				}
+
 				wg.Done()
 			}(ctx, &nodes[i])
 		} else {
-			err = ctx.runTask(&nodes[i], task)
+			err := ctx.runTask(&nodes[i], task)
 			if err != nil {
+				aggregateErrs = append(aggregateErrs, fail.Runtime(err, "running task on %q", nodes[i].PublicAddress))
+
 				break
 			}
 		}
@@ -84,11 +93,7 @@ func (s *State) RunTaskOnNodes(nodes []kubeoneapi.HostConfig, task NodeTask, par
 
 	wg.Wait()
 
-	if hasErrors {
-		err = errors.New("at least one of the tasks has encountered an error")
-	}
-
-	return err
+	return utilerrors.NewAggregate(aggregateErrs)
 }
 
 type RunModeEnum bool

@@ -17,7 +17,11 @@ limitations under the License.
 package v1beta2
 
 import (
-	"github.com/pkg/errors"
+	"fmt"
+
+	"k8c.io/kubeone/pkg/fail"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // SetCloudProvider parses the string representation of the provider
@@ -40,13 +44,25 @@ func SetCloudProvider(cp *CloudProviderSpec, name string) error {
 		cp.Openstack = &OpenstackSpec{}
 	case "equinixmetal", "packet":
 		cp.EquinixMetal = &EquinixMetalSpec{}
+	case "vmwareCloudDirector":
+		cp.VMwareCloudDirector = &VMwareCloudDirectorSpec{}
 	case "vsphere":
 		cp.Vsphere = &VsphereSpec{}
 	case "none":
 		cp.None = &NoneSpec{}
 	default:
-		return errors.Errorf("provider %q is not supported", name)
+		return fail.ConfigValidation(fmt.Errorf("provider %q is not supported", name))
 	}
 
 	return nil
+}
+
+// NewKubeOneCluster initialize KubeOneCluster with correct typeMeta
+func NewKubeOneCluster() *KubeOneCluster {
+	return &KubeOneCluster{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "KubeOneCluster",
+			APIVersion: SchemeGroupVersion.String(),
+		},
+	}
 }

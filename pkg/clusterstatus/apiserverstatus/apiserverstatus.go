@@ -24,8 +24,9 @@ import (
 	"net/http"
 
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
-	"k8c.io/kubeone/pkg/ssh/sshtunnel"
+	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/state"
+	"k8c.io/kubeone/pkg/tunnel"
 )
 
 const (
@@ -39,7 +40,7 @@ type Report struct {
 // Get uses the /healthz endpoint to check are all API server instances healthy
 func Get(s *state.State, node kubeoneapi.HostConfig) (*Report, error) {
 	insecureTLSConfig := &tls.Config{InsecureSkipVerify: true} //nolint:gosec
-	roundTripper, err := sshtunnel.NewHTTPTransport(s.Connector, node, insecureTLSConfig)
+	roundTripper, err := tunnel.NewHTTPTransport(s.Executor, node, insecureTLSConfig)
 	if err != nil {
 		return &Report{
 			Health: false,
@@ -61,19 +62,19 @@ func apiserverHealth(ctx context.Context, t http.RoundTripper, nodeAddress strin
 	endpoint := fmt.Sprintf(healthzEndpoint, nodeAddress)
 	request, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
-		return false, err
+		return false, fail.Runtime(err, "apiserver status request")
 	}
 
 	httpClient := http.Client{Transport: t}
 	resp, err := httpClient.Do(request)
 	if err != nil {
-		return false, err
+		return false, fail.Runtime(err, "apiserver status request")
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return false, err
+		return false, fail.Runtime(err, "apiserver status response body read")
 	}
 
 	return string(body) == "ok", nil

@@ -36,6 +36,7 @@ variable "worker_os" {
   # valid choices are:
   # * ubuntu
   # * centos
+  # * rockylinux
   default = "ubuntu"
   type    = string
 }
@@ -131,4 +132,19 @@ variable "external_network_name" {
 variable "subnet_dns_servers" {
   type    = list(string)
   default = ["8.8.8.8", "8.8.4.4"]
+}
+
+variable "initial_machinedeployment_replicas" {
+  description = "Number of replicas per MachineDeployment"
+  default     = 1
+  type        = number
+}
+
+variable "initial_machinedeployment_operating_system_profile" {
+  default     = ""
+  type        = string
+  description = <<EOF
+Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.
+If not specified, the default value will be added by machine-controller addon.
+EOF
 }

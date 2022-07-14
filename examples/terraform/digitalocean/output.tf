@@ -18,7 +18,7 @@ output "kubeone_api" {
   description = "kube-apiserver LB endpoint"
 
   value = {
-    endpoint = digitalocean_loadbalancer.control_plane.ip
+    endpoint                    = local.kubeapi_endpoint
     apiserver_alternative_names = var.apiserver_alternative_names
   }
 }
@@ -47,8 +47,11 @@ output "kubeone_workers" {
     # following outputs will be parsed by kubeone and automatically merged into
     # corresponding (by name) worker definition
     "${var.cluster_name}-pool1" = {
-      replicas = 1
+      replicas = var.initial_machinedeployment_replicas
       providerSpec = {
+        annotations = {
+          "k8c.io/operating-system-profile" = var.initial_machinedeployment_operating_system_profile
+        }
         sshPublicKeys   = [digitalocean_ssh_key.deployer.public_key]
         operatingSystem = var.worker_os
         operatingSystemSpec = {
@@ -73,4 +76,3 @@ output "kubeone_workers" {
     }
   }
 }
-

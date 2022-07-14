@@ -22,16 +22,44 @@ import (
 	embeddedaddons "k8c.io/kubeone/addons"
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
 	"k8c.io/kubeone/pkg/clientutil"
+	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/state"
 	"k8c.io/kubeone/pkg/templates/resources"
 
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
-	vSphereDeploymentName = "vsphere-cloud-controller-manager"
+	azureDiskCSIDriverName      = "disk.csi.azure.com"
+	gceStandardStorageClassName = "standard"
+	vSphereDeploymentName       = "vsphere-cloud-controller-manager"
 )
+
+func migrateGCEStandardStorageClass(s *state.State) error {
+	return clientutil.DeleteIfExists(s.Context, s.DynamicClient, gceStandardStorageClass())
+}
+
+func gceStandardStorageClass() *storagev1.StorageClass {
+	return &storagev1.StorageClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: gceStandardStorageClassName,
+		},
+	}
+}
+
+func migrateAzureDiskCSIDriver(s *state.State) error {
+	return clientutil.DeleteIfExists(s.Context, s.DynamicClient, azureDiskCSIDriver())
+}
+
+func azureDiskCSIDriver() *storagev1.CSIDriver {
+	return &storagev1.CSIDriver{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: azureDiskCSIDriverName,
+		},
+	}
+}
 
 func migrateVsphereAddon(s *state.State) error {
 	return clientutil.DeleteIfExists(s.Context, s.DynamicClient, vSphereService())
@@ -57,7 +85,7 @@ func EmbeddedAddonsOnly(addons []kubeoneapi.Addon) (bool, error) {
 	// Read the directory entries for embedded addons
 	embeddedAddons, err := fs.ReadDir(embeddedaddons.FS, ".")
 	if err != nil {
-		return false, err
+		return false, fail.Runtime(err, "reading embedded addons directory")
 	}
 
 	// Iterate over addons specified in the KubeOneCluster object

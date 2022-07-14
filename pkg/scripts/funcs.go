@@ -58,6 +58,13 @@ var (
 		net.netfilter.nf_conntrack_max      = 1000000
 		vm.overcommit_memory                = 1
 		EOF
+		{{- if .CILIUM }}
+		cat <<EOF | sudo tee /etc/sysctl.d/99-zzz-override_cilium.conf
+		# Disable rp_filter on ALL interfaces since it may cause mangled packets to be dropped
+		# https://github.com/cilium/cilium/blob/v1.11.1/pkg/datapath/loader/base.go#L244
+		net.ipv4.conf.all.rp_filter = 0
+		EOF
+		{{ end }}
 		sudo sysctl --system
 		{{ end }}
 
@@ -73,8 +80,8 @@ var (
 )
 
 const (
-	defaultDockerVersion           = "19.03.*"
-	latestDockerVersion            = "20.10.*"
-	defaultContainerdVersion       = "1.4.*"
-	defaultAmazonContainerdVersion = "1.4.*"
+	defaultDockerVersion           = "'19.03.*'"
+	latestDockerVersion            = "'20.10.*'"
+	defaultContainerdVersion       = "'1.5.*'"
+	defaultAmazonContainerdVersion = "'1.4.*'"
 )

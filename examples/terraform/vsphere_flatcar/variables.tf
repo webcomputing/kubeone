@@ -33,7 +33,7 @@ variable "apiserver_alternative_names" {
 variable "worker_os" {
   description = "OS to run on worker machines"
 
-  default = "flarcar"
+  default = "flatcar"
   type    = string
 }
 
@@ -64,6 +64,24 @@ variable "ssh_private_key_file" {
 variable "ssh_agent_socket" {
   description = "SSH Agent socket, default to grab from $SSH_AUTH_SOCK"
   default     = "env:SSH_AUTH_SOCK"
+  type        = string
+}
+
+variable "bastion_host" {
+  description = "ssh jumphost (bastion) hostname"
+  default     = ""
+  type        = string
+}
+
+variable "bastion_port" {
+  description = "ssh jumphost (bastion) port"
+  type        = number
+  default     = 22
+}
+
+variable "bastion_username" {
+  description = "ssh jumphost (bastion) username"
+  default     = ""
   type        = string
 }
 
@@ -123,6 +141,12 @@ variable "disk_size" {
   type        = number
 }
 
+variable "control_plane_vm_count" {
+  default     = 3
+  description = "number of VMs"
+  type        = number
+}
+
 variable "control_plane_memory" {
   default     = 2048
   description = "memory size of each control plane node in MB"
@@ -146,4 +170,25 @@ variable "api_vip" {
   default     = ""
   description = "virtual IP address for Kubernetes API"
   type        = string
+}
+
+variable "initial_machinedeployment_replicas" {
+  description = "Number of replicas per MachineDeployment"
+  default     = 1
+  type        = number
+}
+
+variable "initial_machinedeployment_operating_system_profile" {
+  default     = ""
+  type        = string
+  description = <<EOF
+Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.
+If not specified, the default value will be added by machine-controller addon.
+EOF
+}
+
+variable "is_vsphere_enterprise_plus_license" {
+  description = "toogle on/off based on your vsphere enterprise license"
+  type        = bool
+  default     = true
 }

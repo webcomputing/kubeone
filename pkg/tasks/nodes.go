@@ -20,14 +20,13 @@ import (
 	"bytes"
 	"io"
 	"path/filepath"
-
-	"github.com/pkg/errors"
+	"strings"
 
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
 	"k8c.io/kubeone/pkg/certificate/cabundle"
+	"k8c.io/kubeone/pkg/executor"
+	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/scripts"
-	"k8c.io/kubeone/pkg/ssh"
-	"k8c.io/kubeone/pkg/ssh/sshiofs"
 	"k8c.io/kubeone/pkg/state"
 
 	corev1 "k8s.io/api/core/v1"
@@ -40,7 +39,7 @@ import (
 func restartKubeAPIServer(s *state.State) error {
 	s.Logger.Infoln("Restarting unhealthy API servers if needed...")
 
-	return s.RunTaskOnControlPlane(func(s *state.State, node *kubeoneapi.HostConfig, _ ssh.Connection) error {
+	return s.RunTaskOnControlPlane(func(s *state.State, node *kubeoneapi.HostConfig, _ executor.Interface) error {
 		return restartKubeAPIServerOnOS(s, *node)
 	}, state.RunSequentially)
 }
@@ -48,59 +47,61 @@ func restartKubeAPIServer(s *state.State) error {
 func ensureRestartKubeAPIServer(s *state.State) error {
 	s.Logger.Infoln("Restarting API servers...")
 
-	return s.RunTaskOnControlPlane(func(s *state.State, node *kubeoneapi.HostConfig, _ ssh.Connection) error {
+	return s.RunTaskOnControlPlane(func(s *state.State, node *kubeoneapi.HostConfig, _ executor.Interface) error {
 		return ensureRestartKubeAPIServerOnOS(s, *node)
 	}, state.RunSequentially)
 }
 
 func restartKubeAPIServerOnOS(s *state.State, node kubeoneapi.HostConfig) error {
 	return runOnOS(s, node.OperatingSystem, map[kubeoneapi.OperatingSystemName]runOnOSFn{
-		kubeoneapi.OperatingSystemNameAmazon:  restartKubeAPIServerCrictl,
-		kubeoneapi.OperatingSystemNameCentOS:  restartKubeAPIServerCrictl,
-		kubeoneapi.OperatingSystemNameDebian:  restartKubeAPIServerCrictl,
-		kubeoneapi.OperatingSystemNameFlatcar: restartKubeAPIServerCrictl,
-		kubeoneapi.OperatingSystemNameRHEL:    restartKubeAPIServerCrictl,
-		kubeoneapi.OperatingSystemNameUbuntu:  restartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameAmazon:     restartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameCentOS:     restartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameDebian:     restartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameFlatcar:    restartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameRHEL:       restartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameRockyLinux: restartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameUbuntu:     restartKubeAPIServerCrictl,
 	})
 }
 
 func ensureRestartKubeAPIServerOnOS(s *state.State, node kubeoneapi.HostConfig) error {
 	return runOnOS(s, node.OperatingSystem, map[kubeoneapi.OperatingSystemName]runOnOSFn{
-		kubeoneapi.OperatingSystemNameAmazon:  ensureRestartKubeAPIServerCrictl,
-		kubeoneapi.OperatingSystemNameCentOS:  ensureRestartKubeAPIServerCrictl,
-		kubeoneapi.OperatingSystemNameDebian:  ensureRestartKubeAPIServerCrictl,
-		kubeoneapi.OperatingSystemNameFlatcar: ensureRestartKubeAPIServerCrictl,
-		kubeoneapi.OperatingSystemNameRHEL:    ensureRestartKubeAPIServerCrictl,
-		kubeoneapi.OperatingSystemNameUbuntu:  ensureRestartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameAmazon:     ensureRestartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameCentOS:     ensureRestartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameDebian:     ensureRestartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameFlatcar:    ensureRestartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameRHEL:       ensureRestartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameRockyLinux: ensureRestartKubeAPIServerCrictl,
+		kubeoneapi.OperatingSystemNameUbuntu:     ensureRestartKubeAPIServerCrictl,
 	})
 }
 
 func restartKubeAPIServerCrictl(s *state.State) error {
 	cmd, err := scripts.RestartKubeAPIServerCrictl(false)
 	if err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 	_, _, err = s.Runner.RunRaw(cmd)
 
-	return errors.WithStack(err)
+	return fail.SSH(err, "restarting kubeapi-server pod")
 }
 
 func ensureRestartKubeAPIServerCrictl(s *state.State) error {
 	cmd, err := scripts.RestartKubeAPIServerCrictl(true)
 	if err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 	_, _, err = s.Runner.RunRaw(cmd)
 
-	return errors.WithStack(err)
+	return fail.SSH(err, "restarting kubeapi-server pod")
 }
 
-func labelNodeOSes(s *state.State) error {
+func labelNodes(s *state.State) error {
 	candidateNodes := sets.NewString()
 	nodeList := corev1.NodeList{}
 
 	if err := s.DynamicClient.List(s.Context, &nodeList); err != nil {
-		return err
+		return fail.KubeClient(err, "getting %T", nodeList)
 	}
 
 	for _, node := range nodeList.Items {
@@ -130,11 +131,21 @@ func labelNodeOSes(s *state.State) error {
 
 			node.Labels["v1.kubeone.io/operating-system"] = string(host.OperatingSystem)
 
+			for labKey, labVal := range host.Labels {
+				if strings.HasSuffix(labKey, "-") {
+					// drop minus from the suffix
+					labelToDelete := labKey[:len(labKey)-1]
+					delete(node.Labels, labelToDelete)
+				} else {
+					node.Labels[labKey] = labVal
+				}
+			}
+
 			return s.DynamicClient.Update(s.Context, &node)
 		})
 
 		if updateErr != nil {
-			return updateErr
+			return fail.KubeClient(updateErr, "updating %s Node", nodeName)
 		}
 	}
 
@@ -142,7 +153,7 @@ func labelNodeOSes(s *state.State) error {
 }
 
 func patchStaticPods(s *state.State) error {
-	return s.RunTaskOnControlPlane(func(ctx *state.State, node *kubeoneapi.HostConfig, conn ssh.Connection) error {
+	return s.RunTaskOnControlPlane(func(ctx *state.State, node *kubeoneapi.HostConfig, conn executor.Interface) error {
 		s.Logger.Infoln("Patching static pods...")
 
 		sshfs := ctx.Runner.NewFS()
@@ -151,7 +162,7 @@ func patchStaticPods(s *state.State) error {
 			return err
 		}
 		defer f.Close()
-		mgrPodManifest, _ := f.(sshiofs.ExtendedFile)
+		mgrPodManifest, _ := f.(executor.ExtendedFile)
 
 		kubeManagerBuf, err := io.ReadAll(mgrPodManifest)
 		if err != nil {
@@ -160,7 +171,7 @@ func patchStaticPods(s *state.State) error {
 
 		pod := corev1.Pod{}
 		if err = yaml.Unmarshal(kubeManagerBuf, &pod); err != nil {
-			return errors.Wrap(err, "failed to unmarshal kube-controller-manager.yaml")
+			return fail.Runtime(err, "unmarshalling kube-controller-manager.yaml")
 		}
 
 		cacertDir := cabundle.OriginalCertsDir
@@ -195,7 +206,7 @@ func patchStaticPods(s *state.State) error {
 
 		buf, err := yaml.Marshal(&pod)
 		if err != nil {
-			return errors.Wrap(err, "failed to marshal kube-controller-manager.yaml")
+			return fail.Runtime(err, "marshalling kube-controller-manager.yaml")
 		}
 
 		if err = mgrPodManifest.Truncate(0); err != nil {
@@ -208,6 +219,6 @@ func patchStaticPods(s *state.State) error {
 
 		_, err = io.Copy(mgrPodManifest, bytes.NewBuffer(buf))
 
-		return errors.Wrap(err, "failed to write kube-controller-manager.yaml")
+		return fail.Runtime(err, "writing kube-controller-manager.yaml")
 	}, state.RunParallel)
 }

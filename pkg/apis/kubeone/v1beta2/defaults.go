@@ -49,6 +49,7 @@ func SetDefaults_KubeOneCluster(obj *KubeOneCluster) {
 	SetDefaults_APIEndpoints(obj)
 	SetDefaults_Versions(obj)
 	SetDefaults_ContainerRuntime(obj)
+	SetDefaults_CloudProvider_External(obj)
 	SetDefaults_ClusterNetwork(obj)
 	SetDefaults_Proxy(obj)
 	SetDefaults_MachineController(obj)
@@ -63,6 +64,12 @@ func SetDefaults_Hosts(obj *KubeOneCluster) {
 	}
 
 	setDefaultLeader := true
+
+	gteKube124Condition, _ := semver.NewConstraint(">= 1.24")
+	actualVer, err := semver.NewVersion(obj.Versions.Kubernetes)
+	if err != nil {
+		return
+	}
 
 	// Define a unique ID for each host
 	for idx := range obj.ControlPlane.Hosts {
@@ -79,6 +86,12 @@ func SetDefaults_Hosts(obj *KubeOneCluster) {
 					Effect: corev1.TaintEffectNoSchedule,
 					Key:    "node-role.kubernetes.io/master",
 				},
+			}
+			if gteKube124Condition.Check(actualVer) {
+				obj.ControlPlane.Hosts[idx].Taints = append(obj.ControlPlane.Hosts[idx].Taints, corev1.Taint{
+					Effect: corev1.TaintEffectNoSchedule,
+					Key:    "node-role.kubernetes.io/control-plane",
+				})
 			}
 		}
 	}
@@ -107,7 +120,7 @@ func SetDefaults_APIEndpoints(obj *KubeOneCluster) {
 		}
 		obj.APIEndpoint.Host = obj.ControlPlane.Hosts[0].PublicAddress
 	}
-	obj.APIEndpoint.Port = defaulti(obj.APIEndpoint.Port, 6443)
+	obj.APIEndpoint.Port = defaults(obj.APIEndpoint.Port, 6443)
 }
 
 func SetDefaults_Versions(obj *KubeOneCluster) {
@@ -134,6 +147,22 @@ func SetDefaults_ContainerRuntime(obj *KubeOneCluster) {
 	}
 }
 
+func SetDefaults_CloudProvider_External(obj *KubeOneCluster) {
+	switch {
+	case obj.CloudProvider.DigitalOcean != nil:
+		obj.CloudProvider.External = true
+	case obj.CloudProvider.Hetzner != nil:
+		obj.CloudProvider.External = true
+	// // TODO: enable those cases when we'll have corresponding CCMs
+	// case obj.CloudProvider.Nutanix != nil:
+	// 	obj.CloudProvider.External = true
+	// case obj.CloudProvider.VMwareCloudDirector != nil:
+	// 	obj.CloudProvider.External = true
+	case obj.CloudProvider.Openstack != nil:
+		obj.CloudProvider.External = true
+	}
+}
+
 func SetDefaults_ClusterNetwork(obj *KubeOneCluster) {
 	obj.ClusterNetwork.PodSubnet = defaults(obj.ClusterNetwork.PodSubnet, DefaultPodSubnet)
 	obj.ClusterNetwork.ServiceSubnet = defaults(obj.ClusterNetwork.ServiceSubnet, DefaultServiceSubnet)
@@ -143,13 +172,13 @@ func SetDefaults_ClusterNetwork(obj *KubeOneCluster) {
 	defaultCanal := &CanalSpec{MTU: DefaultCanalMTU}
 	switch {
 	case obj.CloudProvider.AWS != nil:
-		defaultCanal.MTU = defaulti(defaultCanal.MTU, 8951) // 9001 AWS Jumbo Frame - 50 VXLAN bytes
+		defaultCanal.MTU = defaults(defaultCanal.MTU, 8951) // 9001 AWS Jumbo Frame - 50 VXLAN bytes
 	case obj.CloudProvider.GCE != nil:
-		defaultCanal.MTU = defaulti(defaultCanal.MTU, 1410) // GCE specific 1460 bytes - 50 VXLAN bytes
+		defaultCanal.MTU = defaults(defaultCanal.MTU, 1410) // GCE specific 1460 bytes - 50 VXLAN bytes
 	case obj.CloudProvider.Hetzner != nil:
-		defaultCanal.MTU = defaulti(defaultCanal.MTU, 1400) // Hetzner specific 1450 bytes - 50 VXLAN bytes
+		defaultCanal.MTU = defaults(defaultCanal.MTU, 1400) // Hetzner specific 1450 bytes - 50 VXLAN bytes
 	case obj.CloudProvider.Openstack != nil:
-		defaultCanal.MTU = defaulti(defaultCanal.MTU, 1400) // Openstack specific 1450 bytes - 50 VXLAN bytes
+		defaultCanal.MTU = defaults(defaultCanal.MTU, 1400) // Openstack specific 1450 bytes - 50 VXLAN bytes
 	}
 
 	if obj.ClusterNetwork.CNI == nil {
@@ -223,9 +252,9 @@ func defaultOpenIDConnect(config *OpenIDConnectConfig) {
 
 func defaultStaticAuditLogConfig(obj *StaticAuditLogConfig) {
 	obj.LogPath = defaults(obj.LogPath, "/var/log/kubernetes/audit.log")
-	obj.LogMaxAge = defaulti(obj.LogMaxAge, 30)
-	obj.LogMaxBackup = defaulti(obj.LogMaxBackup, 3)
-	obj.LogMaxSize = defaulti(obj.LogMaxSize, 100)
+	obj.LogMaxAge = defaults(obj.LogMaxAge, 30)
+	obj.LogMaxBackup = defaults(obj.LogMaxBackup, 3)
+	obj.LogMaxSize = defaults(obj.LogMaxSize, 100)
 }
 
 func defaultHostConfig(obj *HostConfig) {
@@ -239,21 +268,15 @@ func defaultHostConfig(obj *HostConfig) {
 		obj.SSHAgentSocket = defaults(obj.SSHAgentSocket, "env:SSH_AUTH_SOCK")
 	}
 	obj.SSHUsername = defaults(obj.SSHUsername, "root")
-	obj.SSHPort = defaulti(obj.SSHPort, 22)
-	obj.BastionPort = defaulti(obj.BastionPort, 22)
+	obj.SSHPort = defaults(obj.SSHPort, 22)
+	obj.BastionPort = defaults(obj.BastionPort, 22)
 	obj.BastionUser = defaults(obj.BastionUser, obj.SSHUsername)
 }
 
-func defaults(input, defaultValue string) string {
-	if input != "" {
-		return input
-	}
+func defaults[T comparable](input, defaultValue T) T {
+	var zero T
 
-	return defaultValue
-}
-
-func defaulti(input, defaultValue int) int {
-	if input != 0 {
+	if input != zero {
 		return input
 	}
 

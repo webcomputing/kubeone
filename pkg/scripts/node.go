@@ -16,13 +16,17 @@ limitations under the License.
 
 package scripts
 
-import "github.com/MakeNowJust/heredoc/v2"
+import (
+	"github.com/MakeNowJust/heredoc/v2"
+
+	"k8c.io/kubeone/pkg/fail"
+)
 
 var (
 	hostnameScript = heredoc.Doc(`
 		fqdn=$(hostname -f)
 		[ "$fqdn" = localhost ] && fqdn=$(hostname)
-		echo "$fqdn"
+		echo -n "$fqdn"
 	`)
 
 	restartKubeAPIServerCrictlTemplate = heredoc.Doc(`
@@ -54,7 +58,9 @@ func Hostname() string {
 }
 
 func RestartKubeAPIServerCrictl(ensure bool) (string, error) {
-	return Render(restartKubeAPIServerCrictlTemplate, Data{
+	result, err := Render(restartKubeAPIServerCrictlTemplate, Data{
 		"ENSURE": ensure,
 	})
+
+	return result, fail.Runtime(err, "rendering restartKubeAPIServerCrictlTemplate script")
 }

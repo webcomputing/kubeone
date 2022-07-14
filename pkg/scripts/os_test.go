@@ -48,6 +48,12 @@ func withNutanixCloudProvider(cls *kubeoneapi.KubeOneCluster) {
 	}
 }
 
+func withCiliumCNI(cls *kubeoneapi.KubeOneCluster) {
+	cls.ClusterNetwork.CNI = &kubeoneapi.CNI{
+		Cilium: &kubeoneapi.CiliumSpec{},
+	}
+}
+
 func withProxy(proxy string) genClusterOpts {
 	return func(cls *kubeoneapi.KubeOneCluster) {
 		cls.Proxy.HTTPS = proxy
@@ -160,6 +166,12 @@ func TestKubeadmDebian(t *testing.T) {
 			name: "nutanix cluster",
 			args: args{
 				cluster: genCluster(withNutanixCloudProvider),
+			},
+		},
+		{
+			name: "cilium cluster",
+			args: args{
+				cluster: genCluster(withCiliumCNI),
 			},
 		},
 	}
@@ -291,6 +303,12 @@ func TestKubeadmCentOS(t *testing.T) {
 				cluster: genCluster(withNutanixCloudProvider),
 			},
 		},
+		{
+			name: "cilium cluster",
+			args: args{
+				cluster: genCluster(withCiliumCNI),
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -392,6 +410,12 @@ func TestKubeadmAmazonLinux(t *testing.T) {
 				cluster: genCluster(withContainerd, withInsecureRegistry("127.0.0.1:5000")),
 			},
 		},
+		{
+			name: "with cilium",
+			args: args{
+				cluster: genCluster(withCiliumCNI),
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -455,6 +479,21 @@ func TestKubeadmFlatcar(t *testing.T) {
 			name: "with containerd",
 			args: args{
 				cluster: genCluster(withContainerd),
+			},
+		},
+		{
+			name: "with containerd with insecure registry",
+			args: args{
+				cluster: genCluster(
+					withContainerd,
+					withInsecureRegistry("127.0.0.1:5000"),
+				),
+			},
+		},
+		{
+			name: "with cilium",
+			args: args{
+				cluster: genCluster(withCiliumCNI),
 			},
 		},
 	}
@@ -572,7 +611,12 @@ func TestUpgradeKubeadmAndCNIAmazonLinux(t *testing.T) {
 func TestUpgradeKubeadmAndCNIFlatcar(t *testing.T) {
 	t.Parallel()
 
-	got, err := UpgradeKubeadmAndCNIFlatcar("v1.17.4")
+	c := genCluster(
+		withKubeVersion("v1.17.4"),
+		withContainerd,
+		withInsecureRegistry("127.0.0.1:5000"),
+	)
+	got, err := UpgradeKubeadmAndCNIFlatcar(&c)
 	if err != nil {
 		t.Errorf("UpgradeKubeadmAndCNIFlatcar() error = %v", err)
 
@@ -627,7 +671,12 @@ func TestUpgradeKubeletAndKubectlAmazonLinux(t *testing.T) {
 func TestUpgradeKubeletAndKubectlFlatcar(t *testing.T) {
 	t.Parallel()
 
-	got, err := UpgradeKubeletAndKubectlFlatcar("v1.17.4")
+	c := genCluster(
+		withKubeVersion("v1.17.4"),
+		withContainerd,
+		withInsecureRegistry("127.0.0.1:5000"),
+	)
+	got, err := UpgradeKubeletAndKubectlFlatcar(&c)
 	if err != nil {
 		t.Errorf("UpgradeKubeletAndKubectlFlatcar() error = %v", err)
 

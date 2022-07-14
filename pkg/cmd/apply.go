@@ -18,8 +18,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 
 	"github.com/MakeNowJust/heredoc/v2"
@@ -28,6 +26,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/state"
 	"k8c.io/kubeone/pkg/tasks"
 
@@ -52,38 +51,16 @@ type applyOpts struct {
 func (opts *applyOpts) BuildState() (*state.State, error) {
 	s, err := opts.globalOptions.BuildState()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to build state")
+		return nil, err
 	}
 
-	s.BackupFile = opts.BackupFile
+	s.BackupFile = defaultBackupPath(opts.BackupFile, opts.ManifestFile, s.Cluster.Name)
 	s.ForceInstall = opts.ForceInstall
 	s.ForceUpgrade = opts.ForceUpgrade
 	s.UpgradeMachineDeployments = opts.UpgradeMachineDeployments
 	s.CreateMachineDeployments = opts.CreateMachineDeployments
 
-	if s.BackupFile == "" {
-		fullPath, _ := filepath.Abs(opts.ManifestFile)
-		clusterName := s.Cluster.Name
-		s.BackupFile = filepath.Join(filepath.Dir(fullPath), fmt.Sprintf("%s.tar.gz", clusterName))
-	}
-
-	// refuse to overwrite existing backups (NB: since we attempt to
-	// write to the file later on to check for write permissions, we
-	// inadvertently create a zero byte file even if the first step
-	// of the installer fails; for this reason it's okay to find an
-	// existing, zero byte backup)
-	stat, err := os.Stat(s.BackupFile)
-	if err != nil && stat != nil && stat.Size() > 0 {
-		return nil, errors.Errorf("backup %s already exists, refusing to overwrite", opts.BackupFile)
-	}
-
-	// try to write to the file before doing anything else
-	f, err := os.OpenFile(s.BackupFile, os.O_RDWR|os.O_CREATE, 0600)
-	if err != nil {
-		return nil, errors.Wrapf(err, "cannot open %q for writing", opts.BackupFile)
-	}
-
-	return s, f.Close()
+	return s, initBackup(s.BackupFile)
 }
 
 func applyCmd(rootFlags *pflag.FlagSet) *cobra.Command {
@@ -99,16 +76,21 @@ func applyCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 			This command takes KubeOne manifest which contains information about hosts and how the cluster should be provisioned.
 			It's possible to source information about hosts from Terraform output, using the '--tfjson' flag.
 		`),
-		Example: `kubeone apply -m mycluster.yaml -t terraformoutput.json`,
+		SilenceErrors: true,
+		Example:       `kubeone apply -m mycluster.yaml -t terraformoutput.json`,
 		RunE: func(_ *cobra.Command, args []string) error {
 			gopts, err := persistentGlobalOptions(rootFlags)
 			if err != nil {
-				return errors.Wrap(err, "unable to get global flags")
+				return err
 			}
 
 			opts.globalOptions = *gopts
+			st, err := opts.BuildState()
+			if err != nil {
+				return err
+			}
 
-			return runApply(opts)
+			return runApply(st, opts)
 		},
 	}
 
@@ -165,71 +147,67 @@ func applyCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 	return cmd
 }
 
-func runApply(opts *applyOpts) error {
-	s, err := opts.BuildState()
-	if err != nil {
-		return errors.Wrap(err, "failed to initialize State")
-	}
-
+func runApply(st *state.State, opts *applyOpts) error {
 	// Validate credentials
-	if vErr := validateCredentials(s, opts.CredentialsFile); vErr != nil {
-		return vErr
+	if err := validateCredentials(st, opts.CredentialsFile); err != nil {
+		return err
 	}
 
 	// Probe the cluster for the actual state and the needed tasks.
 	probbing := tasks.WithHostnameOS(nil)
 	probbing = tasks.WithProbesAndSafeguard(probbing)
 
-	if err = probbing.Run(s); err != nil {
+	if err := probbing.Run(st); err != nil {
 		return err
 	}
 
-	if s.Verbose {
+	if st.Verbose {
 		// Print information about hosts collected by probes
-		for _, host := range s.LiveCluster.ControlPlane {
+		for _, host := range st.LiveCluster.ControlPlane {
 			printHostInformation(host)
 		}
 
-		for _, host := range s.LiveCluster.StaticWorkers {
+		for _, host := range st.LiveCluster.StaticWorkers {
 			printHostInformation(host)
 		}
 	}
 
 	// Reconcile the cluster based on the probe status
-	if !s.LiveCluster.IsProvisioned() {
-		return runApplyInstall(s, opts)
+	if !st.LiveCluster.IsProvisioned() {
+		return runApplyInstall(st, opts)
 	}
 
-	if !s.LiveCluster.Healthy() {
+	if !st.LiveCluster.Healthy() {
 		if opts.RotateEncryptionKey {
-			s.Logger.Errorln("cluster is not healthy, encryption key rotation is not supported")
-
-			return errors.New("cluster is not healthy, encryption key rotation is not supported")
+			return fail.RuntimeError{
+				Op:  "checking encryption key rotation",
+				Err: errors.New("cluster is not healthy, encryption key rotation is not supported"),
+			}
 		}
 
-		brokenHosts := s.LiveCluster.BrokenHosts()
+		brokenHosts := st.LiveCluster.BrokenHosts()
 		if len(brokenHosts) > 0 {
 			for _, node := range brokenHosts {
-				s.Logger.Errorf("Host %q is broken and needs to be manually removed\n", node)
+				st.Logger.Errorf("Host %q is broken and needs to be manually removed\n", node)
 			}
 
-			s.Logger.Warnf("Hosts must be removed in a correct order to preserve the Etcd quorum.")
-			s.Logger.Warnf("Loss of the Etcd quorum can cause loss of all data!!!")
-			s.Logger.Warnf("After removing the recommended hosts, run 'kubeone apply' before removing any other host.")
+			st.Logger.Warnf("Hosts must be removed in a correct order to preserve the Etcd quorum.")
+			st.Logger.Warnf("Loss of the Etcd quorum can cause loss of all data!!!")
+			st.Logger.Warnf("After removing the recommended hosts, run 'kubeone apply' before removing any other host.")
 
-			safeToDelete := s.LiveCluster.SafeToDeleteHosts()
+			safeToDelete := st.LiveCluster.SafeToDeleteHosts()
 			if len(safeToDelete) > 0 {
-				s.Logger.Warnf("The recommended removal order:")
+				st.Logger.Warnf("The recommended removal order:")
 				for _, safe := range safeToDelete {
-					s.Logger.Warnf("- %q", safe)
+					st.Logger.Warnf("- %q", safe)
 				}
 			} else {
-				s.Logger.Warnf("No other broken node can be removed without losing quorum.")
+				st.Logger.Warnf("No other broken node can be removed without losing quorum.")
 			}
 		}
 
 		runRepair := false
-		for _, node := range s.LiveCluster.ControlPlane {
+		for _, node := range st.LiveCluster.ControlPlane {
 			if !node.IsInCluster {
 				runRepair = true
 
@@ -238,7 +216,7 @@ func runApply(opts *applyOpts) error {
 		}
 
 		if !runRepair {
-			for _, node := range s.LiveCluster.StaticWorkers {
+			for _, node := range st.LiveCluster.StaticWorkers {
 				if !node.IsInCluster {
 					runRepair = true
 
@@ -247,40 +225,40 @@ func runApply(opts *applyOpts) error {
 			}
 		}
 
-		if safeRepair, higherVer := s.LiveCluster.SafeToRepair(s.Cluster.Versions.Kubernetes); !safeRepair {
-			s.Logger.Errorln("Repair and upgrade are not supported at the same time!")
-			s.Logger.Warnf("Requested version: %s\n", s.Cluster.Versions.Kubernetes)
-			s.Logger.Warnf("Highest version: %s\n", higherVer)
-			s.Logger.Warnf("Use version %s to repair the cluster, then run apply with the new version\n", higherVer)
+		if safeRepair, higherVer := st.LiveCluster.SafeToRepair(st.Cluster.Versions.Kubernetes); !safeRepair {
+			st.Logger.Errorln("Repair and upgrade are not supported at the same time!")
+			st.Logger.Warnf("Requested version: %s\n", st.Cluster.Versions.Kubernetes)
+			st.Logger.Warnf("Highest version: %s\n", higherVer)
+			st.Logger.Warnf("Use version %s to repair the cluster, then run apply with the new version\n", higherVer)
 
-			return errors.New("repair and upgrade are not supported at the same time")
+			return fail.ConfigValidation(fmt.Errorf("repair and upgrade are not supported at the same time"))
 		}
 
 		if runRepair {
-			return runApplyInstall(s, opts)
+			return runApplyInstall(st, opts)
 		}
 
 		if len(brokenHosts) > 0 {
-			return errors.New("broken host(s) found, remove it manually")
+			return fail.NewConfigError("broken hosts check", "broken host(s) found, remove it manually")
 		}
 
 		return nil
 	}
 
 	if opts.RotateEncryptionKey {
-		if !s.EncryptionEnabled() {
-			return errors.New("Encryption Providers support is not enabled for this cluster")
+		if !st.EncryptionEnabled() {
+			return fail.ConfigValidation(fmt.Errorf("encryption Providers support is not enabled for this cluster"))
 		}
 
-		if s.Cluster.Features.EncryptionProviders != nil &&
-			s.Cluster.Features.EncryptionProviders.CustomEncryptionConfiguration != "" {
-			return errors.New("key rotation of custom providers file is not supported")
+		if st.Cluster.Features.EncryptionProviders != nil &&
+			st.Cluster.Features.EncryptionProviders.CustomEncryptionConfiguration != "" {
+			return fail.ConfigValidation(fmt.Errorf("key rotation of custom providers file is not supported"))
 		}
 
-		return runApplyRotateKey(s, opts)
+		return runApplyRotateKey(st, opts)
 	}
 
-	return runApplyUpgradeIfNeeded(s, opts)
+	return runApplyUpgradeIfNeeded(st, opts)
 }
 
 func runApplyInstall(s *state.State, opts *applyOpts) error { // Print the expected changes
@@ -311,8 +289,10 @@ func runApplyInstall(s *state.State, opts *applyOpts) error { // Print the expec
 		fmt.Println("\t! force-install option provided: force install new binary versions (!dangerous!)")
 	}
 
-	for _, node := range s.Cluster.DynamicWorkers {
-		fmt.Printf("\t+ ensure machinedeployment %q with %d replica(s) exists\n", node.Name, resolveInt(node.Replicas))
+	if !s.LiveCluster.IsProvisioned() {
+		for _, node := range s.Cluster.DynamicWorkers {
+			fmt.Printf("\t+ ensure machinedeployment %q with %d replica(s) exists\n", node.Name, resolveInt(node.Replicas))
+		}
 	}
 
 	if s.Cluster.Addons.Enabled() && s.Cluster.Addons.Path != "" {
@@ -334,10 +314,10 @@ func runApplyInstall(s *state.State, opts *applyOpts) error { // Print the expec
 	}
 
 	if opts.NoInit {
-		return errors.Wrap(tasks.WithBinariesOnly(nil).Run(s), "failed to install kubernetes binaries")
+		return tasks.WithBinariesOnly(nil).Run(s)
 	}
 
-	return errors.Wrap(tasks.WithFullInstall(nil).Run(s), "failed to install the cluster")
+	return tasks.WithFullInstall(nil).Run(s)
 }
 
 func runApplyUpgradeIfNeeded(s *state.State, opts *applyOpts) error {
@@ -439,19 +419,19 @@ func runApplyUpgradeIfNeeded(s *state.State, opts *applyOpts) error {
 		return nil
 	}
 
-	return errors.Wrap(tasksToRun.Run(s), "failed to reconcile the cluster")
+	return tasksToRun.Run(s)
 }
 
 func runApplyRotateKey(s *state.State, opts *applyOpts) error {
 	if !opts.ForceUpgrade {
 		s.Logger.Error("rotating encryption keys requires the --force-upgrade flag")
 
-		return errors.New("rotating encryption keys requires the --force-upgrade flag")
+		return fail.ConfigValidation(fmt.Errorf("rotating encryption keys requires the --force-upgrade flag"))
 	}
 	if !s.EncryptionEnabled() {
 		s.Logger.Error("rotating encryption keys failed: Encryption Providers support is not enabled")
 
-		return errors.New("rotating encryption keys failed: Encryption Providers support is not enabled")
+		return fail.ConfigValidation(fmt.Errorf("rotating encryption keys failed: Encryption Providers support is not enabled"))
 	}
 
 	fmt.Println("The following actions will be taken: ")
@@ -474,7 +454,7 @@ func runApplyRotateKey(s *state.State, opts *applyOpts) error {
 		return nil
 	}
 
-	return errors.Wrap(tasksToRun.Run(s), "failed to reconcile the cluster")
+	return tasksToRun.Run(s)
 }
 
 func printHostInformation(host state.Host) {

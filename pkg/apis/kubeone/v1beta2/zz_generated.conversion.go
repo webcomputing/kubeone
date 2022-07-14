@@ -573,6 +573,16 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.AddGeneratedConversionFunc((*VMwareCloudDirectorSpec)(nil), (*kubeone.VMwareCloudDirectorSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1beta2_VMwareCloudDirectorSpec_To_kubeone_VMwareCloudDirectorSpec(a.(*VMwareCloudDirectorSpec), b.(*kubeone.VMwareCloudDirectorSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*kubeone.VMwareCloudDirectorSpec)(nil), (*VMwareCloudDirectorSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_kubeone_VMwareCloudDirectorSpec_To_v1beta2_VMwareCloudDirectorSpec(a.(*kubeone.VMwareCloudDirectorSpec), b.(*VMwareCloudDirectorSpec), scope)
+	}); err != nil {
+		return err
+	}
 	if err := s.AddGeneratedConversionFunc((*VersionConfig)(nil), (*kubeone.VersionConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1beta2_VersionConfig_To_kubeone_VersionConfig(a.(*VersionConfig), b.(*kubeone.VersionConfig), scope)
 	}); err != nil {
@@ -821,6 +831,7 @@ func autoConvert_v1beta2_CloudProviderSpec_To_kubeone_CloudProviderSpec(in *Clou
 	out.Nutanix = (*kubeone.NutanixSpec)(unsafe.Pointer(in.Nutanix))
 	out.Openstack = (*kubeone.OpenstackSpec)(unsafe.Pointer(in.Openstack))
 	out.EquinixMetal = (*kubeone.EquinixMetalSpec)(unsafe.Pointer(in.EquinixMetal))
+	out.VMwareCloudDirector = (*kubeone.VMwareCloudDirectorSpec)(unsafe.Pointer(in.VMwareCloudDirector))
 	out.Vsphere = (*kubeone.VsphereSpec)(unsafe.Pointer(in.Vsphere))
 	out.None = (*kubeone.NoneSpec)(unsafe.Pointer(in.None))
 	return nil
@@ -843,6 +854,7 @@ func autoConvert_kubeone_CloudProviderSpec_To_v1beta2_CloudProviderSpec(in *kube
 	out.Nutanix = (*NutanixSpec)(unsafe.Pointer(in.Nutanix))
 	out.Openstack = (*OpenstackSpec)(unsafe.Pointer(in.Openstack))
 	out.EquinixMetal = (*EquinixMetalSpec)(unsafe.Pointer(in.EquinixMetal))
+	out.VMwareCloudDirector = (*VMwareCloudDirectorSpec)(unsafe.Pointer(in.VMwareCloudDirector))
 	out.Vsphere = (*VsphereSpec)(unsafe.Pointer(in.Vsphere))
 	out.None = (*NoneSpec)(unsafe.Pointer(in.None))
 	return nil
@@ -1263,6 +1275,7 @@ func autoConvert_v1beta2_HostConfig_To_kubeone_HostConfig(in *HostConfig, out *k
 	out.Hostname = in.Hostname
 	out.IsLeader = in.IsLeader
 	out.Taints = *(*[]v1.Taint)(unsafe.Pointer(&in.Taints))
+	out.Labels = *(*map[string]string)(unsafe.Pointer(&in.Labels))
 	if err := Convert_v1beta2_KubeletConfig_To_kubeone_KubeletConfig(&in.Kubelet, &out.Kubelet, s); err != nil {
 		return err
 	}
@@ -1289,6 +1302,7 @@ func autoConvert_kubeone_HostConfig_To_v1beta2_HostConfig(in *kubeone.HostConfig
 	out.Hostname = in.Hostname
 	out.IsLeader = in.IsLeader
 	out.Taints = *(*[]v1.Taint)(unsafe.Pointer(&in.Taints))
+	out.Labels = *(*map[string]string)(unsafe.Pointer(&in.Labels))
 	if err := Convert_kubeone_KubeletConfig_To_v1beta2_KubeletConfig(&in.Kubelet, &out.Kubelet, s); err != nil {
 		return err
 	}
@@ -1487,6 +1501,7 @@ func autoConvert_v1beta2_KubeletConfig_To_kubeone_KubeletConfig(in *KubeletConfi
 	out.SystemReserved = *(*map[string]string)(unsafe.Pointer(&in.SystemReserved))
 	out.KubeReserved = *(*map[string]string)(unsafe.Pointer(&in.KubeReserved))
 	out.EvictionHard = *(*map[string]string)(unsafe.Pointer(&in.EvictionHard))
+	out.MaxPods = (*int32)(unsafe.Pointer(in.MaxPods))
 	return nil
 }
 
@@ -1499,6 +1514,7 @@ func autoConvert_kubeone_KubeletConfig_To_v1beta2_KubeletConfig(in *kubeone.Kube
 	out.SystemReserved = *(*map[string]string)(unsafe.Pointer(&in.SystemReserved))
 	out.KubeReserved = *(*map[string]string)(unsafe.Pointer(&in.KubeReserved))
 	out.EvictionHard = *(*map[string]string)(unsafe.Pointer(&in.EvictionHard))
+	out.MaxPods = (*int32)(unsafe.Pointer(in.MaxPods))
 	return nil
 }
 
@@ -1755,6 +1771,8 @@ func autoConvert_v1beta2_ProviderSpec_To_kubeone_ProviderSpec(in *ProviderSpec, 
 	out.CloudProviderSpec = *(*json.RawMessage)(unsafe.Pointer(&in.CloudProviderSpec))
 	out.Annotations = *(*map[string]string)(unsafe.Pointer(&in.Annotations))
 	out.MachineAnnotations = *(*map[string]string)(unsafe.Pointer(&in.MachineAnnotations))
+	out.NodeAnnotations = *(*map[string]string)(unsafe.Pointer(&in.NodeAnnotations))
+	out.MachineObjectAnnotations = *(*map[string]string)(unsafe.Pointer(&in.MachineObjectAnnotations))
 	out.Labels = *(*map[string]string)(unsafe.Pointer(&in.Labels))
 	out.Taints = *(*[]v1.Taint)(unsafe.Pointer(&in.Taints))
 	out.SSHPublicKeys = *(*[]string)(unsafe.Pointer(&in.SSHPublicKeys))
@@ -1775,6 +1793,8 @@ func autoConvert_kubeone_ProviderSpec_To_v1beta2_ProviderSpec(in *kubeone.Provid
 	out.CloudProviderSpec = *(*json.RawMessage)(unsafe.Pointer(&in.CloudProviderSpec))
 	out.Annotations = *(*map[string]string)(unsafe.Pointer(&in.Annotations))
 	out.MachineAnnotations = *(*map[string]string)(unsafe.Pointer(&in.MachineAnnotations))
+	out.NodeAnnotations = *(*map[string]string)(unsafe.Pointer(&in.NodeAnnotations))
+	out.MachineObjectAnnotations = *(*map[string]string)(unsafe.Pointer(&in.MachineObjectAnnotations))
 	out.Labels = *(*map[string]string)(unsafe.Pointer(&in.Labels))
 	out.Taints = *(*[]v1.Taint)(unsafe.Pointer(&in.Taints))
 	out.SSHPublicKeys = *(*[]string)(unsafe.Pointer(&in.SSHPublicKeys))
@@ -1957,6 +1977,28 @@ func autoConvert_kubeone_SystemPackages_To_v1beta2_SystemPackages(in *kubeone.Sy
 // Convert_kubeone_SystemPackages_To_v1beta2_SystemPackages is an autogenerated conversion function.
 func Convert_kubeone_SystemPackages_To_v1beta2_SystemPackages(in *kubeone.SystemPackages, out *SystemPackages, s conversion.Scope) error {
 	return autoConvert_kubeone_SystemPackages_To_v1beta2_SystemPackages(in, out, s)
+}
+
+func autoConvert_v1beta2_VMwareCloudDirectorSpec_To_kubeone_VMwareCloudDirectorSpec(in *VMwareCloudDirectorSpec, out *kubeone.VMwareCloudDirectorSpec, s conversion.Scope) error {
+	out.VApp = in.VApp
+	out.StorageProfile = in.StorageProfile
+	return nil
+}
+
+// Convert_v1beta2_VMwareCloudDirectorSpec_To_kubeone_VMwareCloudDirectorSpec is an autogenerated conversion function.
+func Convert_v1beta2_VMwareCloudDirectorSpec_To_kubeone_VMwareCloudDirectorSpec(in *VMwareCloudDirectorSpec, out *kubeone.VMwareCloudDirectorSpec, s conversion.Scope) error {
+	return autoConvert_v1beta2_VMwareCloudDirectorSpec_To_kubeone_VMwareCloudDirectorSpec(in, out, s)
+}
+
+func autoConvert_kubeone_VMwareCloudDirectorSpec_To_v1beta2_VMwareCloudDirectorSpec(in *kubeone.VMwareCloudDirectorSpec, out *VMwareCloudDirectorSpec, s conversion.Scope) error {
+	out.VApp = in.VApp
+	out.StorageProfile = in.StorageProfile
+	return nil
+}
+
+// Convert_kubeone_VMwareCloudDirectorSpec_To_v1beta2_VMwareCloudDirectorSpec is an autogenerated conversion function.
+func Convert_kubeone_VMwareCloudDirectorSpec_To_v1beta2_VMwareCloudDirectorSpec(in *kubeone.VMwareCloudDirectorSpec, out *VMwareCloudDirectorSpec, s conversion.Scope) error {
+	return autoConvert_kubeone_VMwareCloudDirectorSpec_To_v1beta2_VMwareCloudDirectorSpec(in, out, s)
 }
 
 func autoConvert_v1beta2_VersionConfig_To_kubeone_VersionConfig(in *VersionConfig, out *kubeone.VersionConfig, s conversion.Scope) error {

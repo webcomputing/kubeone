@@ -17,11 +17,13 @@ limitations under the License.
 package addons
 
 import (
+	"fmt"
 	"io/fs"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/pkg/errors"
 
+	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/semverutil"
 	"k8c.io/kubeone/pkg/state"
 	"k8c.io/kubeone/pkg/templates/resources"
@@ -34,34 +36,39 @@ const (
 
 	// greaterThan23Constraint defines a semver constraint that validates Kubernetes versions is greater than 1.23
 	greaterThan23Constraint = ">= 1.23"
+
+	// defaultStorageClass addon defines name of the default-storage-class addon
+	defaultStorageClassAddonName = "default-storage-class"
 )
 
 var (
 	// embeddedAddons is a list of addons that are embedded in the KubeOne
 	// binary. Those addons are skipped when applying a user-provided addon with the same name.
 	embeddedAddons = map[string]string{
-		resources.AddonCCMAws:             "",
-		resources.AddonCCMAzure:           "",
-		resources.AddonCCMDigitalOcean:    "",
-		resources.AddonCCMHetzner:         "",
-		resources.AddonCCMOpenStack:       "",
-		resources.AddonCCMEquinixMetal:    "",
-		resources.AddonCCMPacket:          "",
-		resources.AddonCCMVsphere:         "",
-		resources.AddonCNICanal:           "",
-		resources.AddonCNICilium:          "",
-		resources.AddonCNIWeavenet:        "",
-		resources.AddonCSIAwsEBS:          "",
-		resources.AddonCSIAzureDisk:       "",
-		resources.AddonCSIAzureFile:       "",
-		resources.AddonCSIDigitalOcean:    "",
-		resources.AddonCSIHetzner:         "",
-		resources.AddonCSINutanix:         "",
-		resources.AddonCSIOpenStackCinder: "",
-		resources.AddonCSIVsphere:         "",
-		resources.AddonMachineController:  "",
-		resources.AddonMetricsServer:      "",
-		resources.AddonNodeLocalDNS:       "",
+		resources.AddonCCMAws:                 "",
+		resources.AddonCCMAzure:               "",
+		resources.AddonCCMDigitalOcean:        "",
+		resources.AddonCCMHetzner:             "",
+		resources.AddonCCMOpenStack:           "",
+		resources.AddonCCMEquinixMetal:        "",
+		resources.AddonCCMPacket:              "",
+		resources.AddonCCMVsphere:             "",
+		resources.AddonCNICanal:               "",
+		resources.AddonCNICilium:              "",
+		resources.AddonCNIWeavenet:            "",
+		resources.AddonCSIAwsEBS:              "",
+		resources.AddonCSIAzureDisk:           "",
+		resources.AddonCSIAzureFile:           "",
+		resources.AddonCSIDigitalOcean:        "",
+		resources.AddonCSIHetzner:             "",
+		resources.AddonCSIGCPComputePD:        "",
+		resources.AddonCSINutanix:             "",
+		resources.AddonCSIOpenStackCinder:     "",
+		resources.AddonCSIVMwareCloudDirector: "",
+		resources.AddonCSIVsphere:             "",
+		resources.AddonMachineController:      "",
+		resources.AddonMetricsServer:          "",
+		resources.AddonNodeLocalDNS:           "",
 	}
 
 	greaterThan23 = semverutil.MustParseConstraint(greaterThan23Constraint)
@@ -154,7 +161,7 @@ func EnsureUserAddons(s *state.State) error {
 	if applier.LocalFS != nil {
 		customAddons, err := fs.ReadDir(applier.LocalFS, ".")
 		if err != nil {
-			return errors.Wrap(err, "failed to read addons directory")
+			return fail.Runtime(err, "reading local addons directory")
 		}
 
 		for _, useraddon := range customAddons {
@@ -179,7 +186,7 @@ func EnsureUserAddons(s *state.State) error {
 
 		if embeddedAddon.Delete {
 			if err := applier.loadAndDeleteAddon(s, applier.EmbededFS, embeddedAddon.Name); err != nil {
-				return errors.Wrapf(err, "failed to load and delete the addon %q", embeddedAddon.Name)
+				return err
 			}
 
 			continue
@@ -191,15 +198,23 @@ func EnsureUserAddons(s *state.State) error {
 	}
 
 	for addonName := range combinedAddons {
+		// NB: We can't migrate StorageClass when applying the CSI driver because
+		// CSI driver is deployed only for Kubernetes 1.23+ clusters, but this
+		// issue affects older clusters as well.
+		if addonName == defaultStorageClassAddonName && s.Cluster.CloudProvider.GCE != nil {
+			if err := migrateGCEStandardStorageClass(s); err != nil {
+				return err
+			}
+		}
 		if err := EnsureAddonByName(s, addonName); err != nil {
-			return errors.Wrapf(err, "failed to load and apply the addon %q", addonName)
+			return err
 		}
 	}
 
 	if applier.LocalFS != nil {
 		s.Logger.Info("Applying addons from the root directory...")
 		if err := applier.loadAndApplyAddon(s, applier.LocalFS, ""); err != nil {
-			return errors.Wrap(err, "failed to load and apply addons from the root directory")
+			return err
 		}
 	}
 
@@ -218,7 +233,7 @@ func EnsureAddonByName(s *state.State, addonName string) error {
 	if applier.LocalFS != nil {
 		addons, lErr := fs.ReadDir(applier.LocalFS, ".")
 		if lErr != nil {
-			return errors.Wrap(lErr, "failed to read addons directory")
+			return fail.Runtime(lErr, "reading local addons directory")
 		}
 
 		for _, a := range addons {
@@ -227,7 +242,7 @@ func EnsureAddonByName(s *state.State, addonName string) error {
 			}
 			if a.Name() == addonName {
 				if err := applier.loadAndApplyAddon(s, applier.LocalFS, a.Name()); err != nil {
-					return errors.Wrap(err, "failed to load and apply addon")
+					return err
 				}
 
 				return nil
@@ -237,7 +252,7 @@ func EnsureAddonByName(s *state.State, addonName string) error {
 
 	addons, eErr := fs.ReadDir(applier.EmbededFS, ".")
 	if eErr != nil {
-		return errors.Wrap(eErr, "failed to read embedded addons")
+		return fail.Runtime(eErr, "reading embedded addons directory")
 	}
 
 	for _, a := range addons {
@@ -246,14 +261,17 @@ func EnsureAddonByName(s *state.State, addonName string) error {
 		}
 		if a.Name() == addonName {
 			if err := applier.loadAndApplyAddon(s, applier.EmbededFS, a.Name()); err != nil {
-				return errors.Wrap(err, "failed to load and apply embedded addon")
+				return err
 			}
 
 			return nil
 		}
 	}
 
-	return errors.Errorf("addon %q does not exist", addonName)
+	return fail.RuntimeError{
+		Op:  fmt.Sprintf("installing %q addon", addonName),
+		Err: errors.New("addon does not exist"),
+	}
 }
 
 // DeleteAddonByName deletes an addon by its name. It's required to keep the
@@ -270,7 +288,7 @@ func DeleteAddonByName(s *state.State, addonName string) error {
 	if applier.LocalFS != nil {
 		addons, lErr := fs.ReadDir(applier.LocalFS, ".")
 		if lErr != nil {
-			return errors.Wrap(lErr, "failed to read addons directory")
+			return fail.Runtime(lErr, "reading local addons directory")
 		}
 
 		for _, a := range addons {
@@ -279,7 +297,7 @@ func DeleteAddonByName(s *state.State, addonName string) error {
 			}
 			if a.Name() == addonName {
 				if err := applier.loadAndDeleteAddon(s, applier.LocalFS, a.Name()); err != nil {
-					return errors.Wrap(err, "failed to load and apply addon")
+					return err
 				}
 
 				return nil
@@ -289,7 +307,7 @@ func DeleteAddonByName(s *state.State, addonName string) error {
 
 	addons, eErr := fs.ReadDir(applier.EmbededFS, ".")
 	if eErr != nil {
-		return errors.Wrap(eErr, "failed to read embedded addons")
+		return fail.Runtime(eErr, "reading embedded addons directory")
 	}
 
 	for _, a := range addons {
@@ -298,14 +316,17 @@ func DeleteAddonByName(s *state.State, addonName string) error {
 		}
 		if a.Name() == addonName {
 			if err := applier.loadAndDeleteAddon(s, applier.EmbededFS, a.Name()); err != nil {
-				return errors.Wrap(err, "failed to load and apply embedded addon")
+				return err
 			}
 
 			return nil
 		}
 	}
 
-	return errors.Errorf("addon %q does not exist", addonName)
+	return fail.RuntimeError{
+		Op:  fmt.Sprintf("installing %q addon", addonName),
+		Err: errors.New("addon does not exist"),
+	}
 }
 
 func ensureCSIAddons(s *state.State, addonsToDeploy []addonAction) []addonAction {
@@ -319,24 +340,33 @@ func ensureCSIAddons(s *state.State, addonsToDeploy []addonAction) []addonAction
 	// for provision operations is NOT supported by in-tree solution.
 
 	switch {
-	// CSI driver is required for k8s v.1.23+
+	// CSI driver is required for k8s v1.23+
 	case s.Cluster.CloudProvider.AWS != nil && (gte23 || s.Cluster.CloudProvider.External):
 		addonsToDeploy = append(addonsToDeploy,
 			addonAction{
 				name: resources.AddonCSIAwsEBS,
 			},
 		)
-	// CSI driver is required for k8s v.1.23+
+	// CSI driver is required for k8s v1.23+
 	case s.Cluster.CloudProvider.Azure != nil && (gte23 || s.Cluster.CloudProvider.External):
 		addonsToDeploy = append(addonsToDeploy,
 			addonAction{
 				name: resources.AddonCSIAzureDisk,
+				supportFn: func() error {
+					return migrateAzureDiskCSIDriver(s)
+				},
 			},
 			addonAction{
 				name: resources.AddonCSIAzureFile,
 			},
 		)
-
+		// CSI driver is required for k8s v1.23+
+	case s.Cluster.CloudProvider.GCE != nil && (gte23 || s.Cluster.CloudProvider.External):
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCSIGCPComputePD,
+			},
+		)
 	// Install CSI driver unconditionally
 	case s.Cluster.CloudProvider.DigitalOcean != nil:
 		addonsToDeploy = append(addonsToDeploy,
@@ -365,7 +395,13 @@ func ensureCSIAddons(s *state.State, addonsToDeploy []addonAction) []addonAction
 				name: resources.AddonCSIOpenStackCinder,
 			},
 		)
-
+	// Install CSI driver unconditionally
+	case s.Cluster.CloudProvider.VMwareCloudDirector != nil:
+		addonsToDeploy = append(addonsToDeploy,
+			addonAction{
+				name: resources.AddonCSIVMwareCloudDirector,
+			},
+		)
 	// Install CSI driver only if external cloud provider is used
 	case s.Cluster.CloudProvider.Vsphere != nil && s.Cluster.CloudProvider.External:
 		addonsToDeploy = append(addonsToDeploy,

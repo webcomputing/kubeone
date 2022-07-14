@@ -20,8 +20,9 @@ import (
 	"time"
 
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
+	"k8c.io/kubeone/pkg/executor"
+	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/scripts"
-	"k8c.io/kubeone/pkg/ssh"
 	"k8c.io/kubeone/pkg/state"
 )
 
@@ -33,7 +34,7 @@ func joinControlplaneNode(s *state.State) error {
 	return s.RunTaskOnFollowers(joinControlPlaneNodeInternal, state.RunSequentially)
 }
 
-func joinControlPlaneNodeInternal(s *state.State, node *kubeoneapi.HostConfig, conn ssh.Connection) error {
+func joinControlPlaneNodeInternal(s *state.State, node *kubeoneapi.HostConfig, conn executor.Interface) error {
 	logger := s.Logger.WithField("node", node.PublicAddress)
 
 	sleepTime := 15 * time.Second
@@ -48,13 +49,13 @@ func joinControlPlaneNodeInternal(s *state.State, node *kubeoneapi.HostConfig, c
 
 	_, _, err = s.Runner.RunRaw(cmd)
 	if err != nil {
-		return err
+		return fail.SSH(err, "joining control plane node %q", node.PublicAddress)
 	}
 
 	return approvePendingCSR(s, node, conn)
 }
 
-func kubeadmCertsExecutor(s *state.State, node *kubeoneapi.HostConfig, conn ssh.Connection) error {
+func kubeadmCertsExecutor(s *state.State, node *kubeoneapi.HostConfig, conn executor.Interface) error {
 	s.Logger.Infoln("Ensuring Certificates...")
 	cmd, err := scripts.KubeadmCert(s.WorkDir, node.ID, s.KubeadmVerboseFlag())
 	if err != nil {
@@ -63,13 +64,13 @@ func kubeadmCertsExecutor(s *state.State, node *kubeoneapi.HostConfig, conn ssh.
 
 	_, _, err = s.Runner.RunRaw(cmd)
 
-	return err
+	return fail.SSH(err, "generating kubeadm certificates")
 }
 
 func initKubernetesLeader(s *state.State) error {
 	s.Logger.Infoln("Initializing Kubernetes on leader...")
 
-	return s.RunTaskOnLeader(func(s *state.State, node *kubeoneapi.HostConfig, conn ssh.Connection) error {
+	return s.RunTaskOnLeader(func(s *state.State, node *kubeoneapi.HostConfig, conn executor.Interface) error {
 		var skipPhase string
 		if s.Cluster.ClusterNetwork.KubeProxy != nil && s.Cluster.ClusterNetwork.KubeProxy.SkipInstallation {
 			skipPhase = kubeadmPhaseKubeProxy
@@ -84,6 +85,6 @@ func initKubernetesLeader(s *state.State) error {
 
 		_, _, err = s.Runner.RunRaw(cmd)
 
-		return err
+		return fail.SSH(err, "initializing kubeadm cluster")
 	})
 }

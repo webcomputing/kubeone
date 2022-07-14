@@ -24,14 +24,13 @@ import (
 	"strings"
 
 	"github.com/MakeNowJust/heredoc/v2"
-	"github.com/pkg/errors"
-	corev1 "k8s.io/api/core/v1"
 
 	embeddedaddons "k8c.io/kubeone/addons"
 	kubeoneapi "k8c.io/kubeone/pkg/apis/kubeone"
 	"k8c.io/kubeone/pkg/certificate"
 	"k8c.io/kubeone/pkg/credentials"
-	"k8c.io/kubeone/pkg/ssh"
+	"k8c.io/kubeone/pkg/executor"
+	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/state"
 	"k8c.io/kubeone/pkg/templates/images"
 	"k8c.io/kubeone/pkg/templates/resources"
@@ -82,54 +81,24 @@ type registryCredentialsContainer struct {
 }
 
 func newAddonsApplier(s *state.State) (*applier, error) {
-	var localFS fs.FS
-
-	if s.Cluster.Addons.Enabled() && s.Cluster.Addons.Path != "" {
-		addonsPath, err := s.Cluster.Addons.RelativePath(s.ManifestFilePath)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to get addons path")
-		}
-
-		localFS = os.DirFS(addonsPath)
+	localFS, err := addonsLocalFS(s.Cluster.Addons, s.ManifestFilePath)
+	if err != nil {
+		return nil, err
 	}
 
 	creds, err := credentials.Any(s.CredentialsFilePath)
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to fetch credentials")
+		return nil, err
 	}
 
-	credsCCM, err := credentials.ProviderCredentials(s.Cluster.CloudProvider, s.CredentialsFilePath, credentials.TypeCCM)
+	credsEnvVarsMC, err := mcCredentialsEnvVars(s)
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to fetch cloud provider credentials")
-	}
-
-	envVarsMC, err := credentials.EnvVarBindings(s.Cluster.CloudProvider, s.CredentialsFilePath, credentials.SecretNameMC, credentials.TypeMC)
-	if err != nil {
-		return nil, errors.Wrap(err, "unable to fetch env var bindings for credentials")
-	}
-
-	credsEnvVarsMC, err := yaml.Marshal(envVarsMC)
-	if err != nil {
-		return nil, errors.Wrap(err, "unable to convert env var bindings for credentials to yaml")
-	}
-
-	var credsEnvVarsOSM []byte
-	if s.Cluster.OperatingSystemManagerEnabled() {
-		var envVarsOSM []corev1.EnvVar
-		envVarsOSM, err = credentials.EnvVarBindings(s.Cluster.CloudProvider, s.CredentialsFilePath, credentials.SecretNameOSM, credentials.TypeOSM)
-		if err != nil {
-			return nil, errors.Wrap(err, "unable to fetch env var bindings for credentials")
-		}
-
-		credsEnvVarsOSM, err = yaml.Marshal(envVarsOSM)
-		if err != nil {
-			return nil, errors.Wrap(err, "unable to convert env var bindings for credentials to yaml")
-		}
+		return nil, err
 	}
 
 	kubeCAPrivateKey, kubeCACert, err := certificate.CAKeyPair(s.Configuration)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to load CA keypair")
+		return nil, err
 	}
 
 	// We want this to be true in two cases:
@@ -179,26 +148,9 @@ func newAddonsApplier(s *state.State) (*applier, error) {
 		}
 	}
 
-	regCredentials := []registryCredentialsContainer{}
-
-	if s.Cluster.ContainerRuntime.Containerd != nil {
-		regNames := []string{}
-
-		for reg := range s.Cluster.ContainerRuntime.Containerd.Registries {
-			regNames = append(regNames, reg)
-		}
-
-		sort.Strings(regNames)
-
-		for _, reg := range regNames {
-			regConfig := s.Cluster.ContainerRuntime.Containerd.Registries[reg]
-			if regConfig.Auth != nil {
-				regCredentials = append(regCredentials, registryCredentialsContainer{
-					RegistryName: reg,
-					Auth:         *regConfig.Auth,
-				})
-			}
-		}
+	credsCCM, err := credentials.ProviderCredentials(s.Cluster.CloudProvider, s.CredentialsFilePath, credentials.TypeCCM)
+	if err != nil {
+		return nil, err
 	}
 
 	data := templateData{
@@ -217,7 +169,7 @@ func newAddonsApplier(s *state.State) (*applier, error) {
 		CSIMigrationFeatureGates:            csiMigrationFeatureGates,
 		MachineControllerCredentialsEnvVars: string(credsEnvVarsMC),
 		OperatingSystemManagerEnabled:       s.Cluster.OperatingSystemManagerEnabled(),
-		RegistryCredentials:                 regCredentials,
+		RegistryCredentials:                 containerdRegistryCredentials(s.Cluster.ContainerRuntime.Containerd),
 		InternalImages: &internalImages{
 			pauseImage: s.PauseImage,
 			resolver:   s.Images.Get,
@@ -229,10 +181,10 @@ func newAddonsApplier(s *state.State) (*applier, error) {
 	// Certs for CSI plugins
 	switch {
 	// Certs for vsphere-csi-webhook (deployed only if CSIMigration is enabled)
-	case csiMigration && s.Cluster.CloudProvider.Vsphere != nil:
-		vsphereCSICertsMap, err := certificate.NewSignedTLSCert(
-			resources.VsphereCSIWebhookName,
-			resources.VsphereCSIWebhookNamespace,
+	case s.Cluster.CloudProvider.Vsphere != nil:
+		vsphereCSISnapshotCertsMap, err := certificate.NewSignedTLSCert(
+			resources.VsphereCSISnapshotValidatingWebhookName,
+			resources.VsphereCSISnapshotValidatingWebhookNamespace,
 			s.Cluster.ClusterNetwork.ServiceDomainName,
 			kubeCAPrivateKey,
 			kubeCACert,
@@ -240,8 +192,23 @@ func newAddonsApplier(s *state.State) (*applier, error) {
 		if err != nil {
 			return nil, err
 		}
-		data.Certificates["vSphereCSIWebhookCert"] = vsphereCSICertsMap[resources.TLSCertName]
-		data.Certificates["vSphereCSIWebhookKey"] = vsphereCSICertsMap[resources.TLSKeyName]
+		data.Certificates["vSphereCSIWebhookCert"] = vsphereCSISnapshotCertsMap[resources.TLSCertName]
+		data.Certificates["vSphereCSIWebhookKey"] = vsphereCSISnapshotCertsMap[resources.TLSKeyName]
+
+		if csiMigration {
+			vsphereCSICertsMap, err := certificate.NewSignedTLSCert(
+				resources.VsphereCSIWebhookName,
+				resources.VsphereCSIWebhookNamespace,
+				s.Cluster.ClusterNetwork.ServiceDomainName,
+				kubeCAPrivateKey,
+				kubeCACert,
+			)
+			if err != nil {
+				return nil, err
+			}
+			data.Certificates["vSphereCSIWebhookCert"] = vsphereCSICertsMap[resources.TLSCertName]
+			data.Certificates["vSphereCSIWebhookKey"] = vsphereCSICertsMap[resources.TLSKeyName]
+		}
 	case s.Cluster.CloudProvider.Nutanix != nil:
 		nutanixCSICertsMap, err := certificate.NewSignedTLSCert(
 			resources.NutanixCSIWebhookName,
@@ -255,6 +222,19 @@ func newAddonsApplier(s *state.State) (*applier, error) {
 		}
 		data.Certificates["NutanixCSIWebhookCert"] = nutanixCSICertsMap[resources.TLSCertName]
 		data.Certificates["NutanixCSIWebhookKey"] = nutanixCSICertsMap[resources.TLSKeyName]
+	case s.Cluster.CloudProvider.GCE != nil:
+		gceCSICertsMap, err := certificate.NewSignedTLSCert(
+			resources.GCEComputeCSIWebhookName,
+			resources.GCEComputeCSIWebhookNamespace,
+			s.Cluster.ClusterNetwork.ServiceDomainName,
+			kubeCAPrivateKey,
+			kubeCACert,
+		)
+		if err != nil {
+			return nil, err
+		}
+		data.Certificates["CSIWebhookCert"] = gceCSICertsMap[resources.TLSCertName]
+		data.Certificates["CSIWebhookKey"] = gceCSICertsMap[resources.TLSKeyName]
 	case s.Cluster.CloudProvider.DigitalOcean != nil && s.Cluster.CloudProvider.External:
 		digitaloceanCSICertsMap, err := certificate.NewSignedTLSCert(
 			resources.DigitalOceanCSIWebhookName,
@@ -282,6 +262,18 @@ func newAddonsApplier(s *state.State) (*applier, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		credsOSM, err := credentials.ProviderCredentials(s.Cluster.CloudProvider, s.CredentialsFilePath, credentials.TypeOSM)
+		if err != nil {
+			return nil, err
+		}
+
+		envVarsOSM := credentials.EnvVarBindings(credentials.SecretNameOSM, credsOSM)
+		credsEnvVarsOSM, err := yaml.Marshal(envVarsOSM)
+		if err != nil {
+			return nil, fail.Runtime(err, "marshalling OSM credentials env variables")
+		}
+
 		data.Certificates["OperatingSystemManagerWebhookCert"] = osmCertsMap[resources.TLSCertName]
 		data.Certificates["OperatingSystemManagerWebhookKey"] = osmCertsMap[resources.TLSKeyName]
 		data.OperatingSystemManagerCredentialsEnvVars = string(credsEnvVarsOSM)
@@ -294,14 +286,78 @@ func newAddonsApplier(s *state.State) (*applier, error) {
 	}, nil
 }
 
+func containerdRegistryCredentials(containerdConfig *kubeoneapi.ContainerRuntimeContainerd) []registryCredentialsContainer {
+	if containerdConfig == nil {
+		return nil
+	}
+
+	var (
+		regCredentials []registryCredentialsContainer
+		regNames       []string
+	)
+
+	for reg := range containerdConfig.Registries {
+		regNames = append(regNames, reg)
+	}
+
+	sort.Strings(regNames)
+
+	for _, reg := range regNames {
+		regConfig := containerdConfig.Registries[reg]
+		if regConfig.Auth != nil {
+			regCredentials = append(regCredentials, registryCredentialsContainer{
+				RegistryName: reg,
+				Auth:         *regConfig.Auth,
+			})
+		}
+	}
+
+	return regCredentials
+}
+
+func mcCredentialsEnvVars(s *state.State) ([]byte, error) {
+	var credsEnvVarsMC []byte
+
+	if s.Cluster.MachineController.Deploy {
+		credsMC, err := credentials.ProviderCredentials(s.Cluster.CloudProvider, s.CredentialsFilePath, credentials.TypeMC)
+		if err != nil {
+			return nil, err
+		}
+
+		envVarsMC := credentials.EnvVarBindings(credentials.SecretNameMC, credsMC)
+		credsEnvVarsMC, err = yaml.Marshal(envVarsMC)
+		if err != nil {
+			return nil, fail.Runtime(err, "marshalling machine-controller credentials env variables")
+		}
+	}
+
+	return credsEnvVarsMC, nil
+}
+
+func addonsLocalFS(clusterAddons *kubeoneapi.Addons, manifestFilePath string) (fs.FS, error) {
+	var localFS fs.FS
+
+	if clusterAddons.Enabled() && clusterAddons.Path != "" {
+		addonsPath, err := clusterAddons.RelativePath(manifestFilePath)
+		if err != nil {
+			return nil, err
+		}
+
+		localFS = os.DirFS(addonsPath)
+	}
+
+	return localFS, nil
+}
+
 // loadAndApplyAddon parses the addons manifests and runs kubectl apply.
 func (a *applier) loadAndApplyAddon(s *state.State, fsys fs.FS, addonName string) error {
 	s.Logger.Infof("Applying addon %s...", addonName)
 
 	manifest, err := a.getManifestsFromDirectory(s, fsys, addonName)
 	if err != nil {
-		return errors.WithStack(err)
+		return err
 	}
+
 	if len(strings.TrimSpace(manifest)) == 0 {
 		if len(addonName) != 0 {
 			s.Logger.Warnf("Addon directory %q is empty, skipping...", addonName)
@@ -310,10 +366,7 @@ func (a *applier) loadAndApplyAddon(s *state.State, fsys fs.FS, addonName string
 		return nil
 	}
 
-	return errors.Wrap(
-		runKubectlApply(s, manifest, addonName),
-		"failed to apply addons",
-	)
+	return runKubectlApply(s, manifest, addonName)
 }
 
 // loadAndApplyAddon parses the addons manifests and runs kubectl apply.
@@ -322,7 +375,7 @@ func (a *applier) loadAndDeleteAddon(s *state.State, fsys fs.FS, addonName strin
 
 	manifest, err := a.getManifestsFromDirectory(s, fsys, addonName)
 	if err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 
 	if len(strings.TrimSpace(manifest)) == 0 {
@@ -333,15 +386,12 @@ func (a *applier) loadAndDeleteAddon(s *state.State, fsys fs.FS, addonName strin
 		return nil
 	}
 
-	return errors.Wrap(
-		runKubectlDelete(s, manifest, addonName),
-		"failed to apply addons",
-	)
+	return runKubectlDelete(s, manifest, addonName)
 }
 
 // runKubectlApply runs kubectl apply command
 func runKubectlApply(s *state.State, manifest string, addonName string) error {
-	return s.RunTaskOnLeader(func(s *state.State, _ *kubeoneapi.HostConfig, conn ssh.Connection) error {
+	return s.RunTaskOnLeader(func(s *state.State, _ *kubeoneapi.HostConfig, conn executor.Interface) error {
 		var (
 			cmd            = fmt.Sprintf(kubectlApplyScript, addonLabel, addonName)
 			stdin          = strings.NewReader(manifest)
@@ -361,7 +411,7 @@ func runKubectlApply(s *state.State, manifest string, addonName string) error {
 
 // runKubectlDelete runs kubectl delete command
 func runKubectlDelete(s *state.State, manifest string, addonName string) error {
-	return s.RunTaskOnLeader(func(s *state.State, _ *kubeoneapi.HostConfig, conn ssh.Connection) error {
+	return s.RunTaskOnLeader(func(s *state.State, _ *kubeoneapi.HostConfig, conn executor.Interface) error {
 		var (
 			cmd            = fmt.Sprintf(kubectlDeleteScript, addonLabel, addonName)
 			stdin          = strings.NewReader(manifest)

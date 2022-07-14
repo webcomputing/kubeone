@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"github.com/MakeNowJust/heredoc/v2"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -41,7 +40,7 @@ type resetOpts struct {
 func (opts *resetOpts) BuildState() (*state.State, error) {
 	s, err := opts.globalOptions.BuildState()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to build State")
+		return nil, err
 	}
 
 	s.DestroyWorkers = opts.DestroyWorkers
@@ -67,8 +66,9 @@ func resetCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			gopts, err := persistentGlobalOptions(rootFlags)
 			if err != nil {
-				return errors.Wrap(err, "unable to get global flags")
+				return err
 			}
+
 			opts.globalOptions = *gopts
 
 			return runReset(opts)
@@ -101,12 +101,19 @@ func resetCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 func runReset(opts *resetOpts) error {
 	s, err := opts.BuildState()
 	if err != nil {
-		return errors.Wrap(err, "failed to initialize State")
+		return err
 	}
 
-	// We intentionally ignore error because "kubeone reset" might also be used
-	// on clusters that are not yet provisioned or broken
-	_ = kubeconfig.BuildKubernetesClientset(s)
+	if opts.DestroyWorkers {
+		if cErr := kubeconfig.BuildKubernetesClientset(s); cErr != nil {
+			s.Logger.Errorln("Failed to build the Kubernetes clientset.")
+			s.Logger.Warnln("Unable to list and delete machine-controller managed nodes.")
+			s.Logger.Warnln("You can skip this phase by using '--destroy-workers=false' flag.")
+			s.Logger.Warnln("If there are worker nodes in the cluster, you might have to delete them manually.")
+
+			return cErr
+		}
+	}
 
 	s.Logger.Warnln("This command will PERMANENTLY destroy the Kubernetes cluster running on the following nodes:")
 
@@ -117,7 +124,7 @@ func runReset(opts *resetOpts) error {
 		fmt.Printf("\t- reset static worker nodes %q (%s)\n", node.Hostname, node.PrivateAddress)
 	}
 
-	if s.DynamicClient != nil {
+	if opts.DestroyWorkers {
 		// Gather information about machine-controller managed nodes
 		machines := clusterv1alpha1.MachineList{}
 		if err = s.DynamicClient.List(s.Context, &machines); err != nil {
@@ -132,10 +139,8 @@ func runReset(opts *resetOpts) error {
 			}
 		}
 	} else {
-		s.Logger.Warnln("Failed to list machine-controller managed Machines.")
-		s.Logger.Warnln("Worker nodes might not be deleted.")
+		s.Logger.Warnln("KubeOne will NOT remove machine-controller managed Machines.")
 		s.Logger.Warnln("If there are worker nodes in the cluster, you might have to delete them manually.")
-		s.Logger.Warnln("You can ignore this warning if the cluster isn't provisioned.")
 	}
 
 	fmt.Printf("\nAfter the command is complete, there's NO way to recover the cluster or its data!\n")
@@ -151,5 +156,5 @@ func runReset(opts *resetOpts) error {
 		return nil
 	}
 
-	return errors.Wrap(tasks.WithReset(nil).Run(s), "failed to reset the cluster")
+	return tasks.WithReset(nil).Run(s)
 }

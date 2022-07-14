@@ -36,6 +36,7 @@ variable "worker_os" {
   # valid choices are:
   # * ubuntu
   # * centos
+  # * rockylinux
   default = "ubuntu"
   type    = string
 }
@@ -92,12 +93,33 @@ variable "lb_operating_system" {
 }
 
 variable "device_type" {
-  default     = "t1.small.x86"
+  default     = "c3.small.x86"
   description = "type (size) of the device"
+  type        = string
+}
+
+variable "lb_device_type" {
+  default     = "c3.small.x86"
+  description = "type (size) of the load balancer device"
   type        = string
 }
 
 variable "project_id" {
   description = "project ID"
   type        = string
+}
+
+variable "initial_machinedeployment_replicas" {
+  description = "Number of replicas per MachineDeployment"
+  default     = 1
+  type        = number
+}
+
+variable "initial_machinedeployment_operating_system_profile" {
+  default     = ""
+  type        = string
+  description = <<EOF
+Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.
+If not specified, the default value will be added by machine-controller addon.
+EOF
 }
