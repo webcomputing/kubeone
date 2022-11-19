@@ -24,11 +24,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/pkg/errors"
 
 	"k8c.io/kubeone/pkg/fail"
-	"k8c.io/kubeone/pkg/templates/resources"
 )
 
 const (
@@ -119,30 +117,6 @@ func (osName OperatingSystemName) IsValid() bool {
 // SetLeader sets is the given host leader
 func (h *HostConfig) SetLeader(leader bool) {
 	h.IsLeader = leader
-}
-
-func (c KubeOneCluster) OperatingSystemManagerEnabled() bool {
-	if c.Addons.Enabled() {
-		for _, embeddedAddon := range c.Addons.Addons {
-			if embeddedAddon.Name == resources.AddonOperatingSystemManager && !embeddedAddon.Delete {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func (c KubeOneCluster) OperatingSystemManagerQueuedForDeletion() bool {
-	if c.Addons.Enabled() {
-		for _, embeddedAddon := range c.Addons.Addons {
-			if embeddedAddon.Name == resources.AddonOperatingSystemManager && embeddedAddon.Delete {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 func (crc ContainerRuntimeConfig) MachineControllerFlags() []string {
@@ -315,8 +289,48 @@ func (p CloudProviderSpec) CloudProviderInTree() bool {
 // CSIMigrationSupported returns if CSI migration is supported for the specified provider.
 // NB: The CSI migration can be supported only if KubeOne supports CSI plugin and driver
 // for the provider
-func (p CloudProviderSpec) CSIMigrationSupported() bool {
-	return p.External && (p.Azure != nil || p.Openstack != nil || p.Vsphere != nil)
+func (c KubeOneCluster) CSIMigrationSupported() bool {
+	if !c.CloudProvider.External {
+		return false
+	}
+
+	_, err := c.csiMigrationFeatureGates(false)
+
+	return err == nil
+}
+
+func (c KubeOneCluster) csiMigrationFeatureGates(complete bool) (map[string]bool, error) {
+	featureGates := map[string]bool{}
+
+	switch {
+	case c.CloudProvider.AWS != nil:
+		featureGates["CSIMigrationAWS"] = true
+		if complete {
+			featureGates["InTreePluginAWSUnregister"] = true
+		}
+	case c.CloudProvider.Azure != nil:
+		featureGates["CSIMigrationAzureDisk"] = true
+		featureGates["CSIMigrationAzureFile"] = true
+		if complete {
+			featureGates["InTreePluginAzureDiskUnregister"] = true
+			featureGates["InTreePluginAzureFileUnregister"] = true
+		}
+	case c.CloudProvider.Openstack != nil:
+		featureGates["CSIMigrationOpenStack"] = true
+		featureGates["ExpandCSIVolumes"] = true
+		if complete {
+			featureGates["InTreePluginOpenStackUnregister"] = true
+		}
+	case c.CloudProvider.Vsphere != nil:
+		featureGates["CSIMigrationvSphere"] = true
+		if complete {
+			featureGates["InTreePluginvSphereUnregister"] = true
+		}
+	default:
+		return nil, fail.ConfigValidation(fmt.Errorf("csi migration is not supported for selected provider"))
+	}
+
+	return featureGates, nil
 }
 
 // CSIMigrationFeatureGates returns CSI migration feature gates in form of a map
@@ -327,65 +341,12 @@ func (p CloudProviderSpec) CSIMigrationSupported() bool {
 // (https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/)
 // This is a KubeOneCluster function because feature gates are Kubernetes-version dependent.
 func (c KubeOneCluster) CSIMigrationFeatureGates(complete bool) (map[string]bool, string, error) {
-	var featureGates map[string]bool
-
-	switch {
-	case c.CloudProvider.Azure != nil:
-		featureGates = map[string]bool{
-			"CSIMigrationAzureDisk": true,
-			"CSIMigrationAzureFile": true,
-		}
-	case c.CloudProvider.Openstack != nil:
-		featureGates = map[string]bool{
-			"CSIMigrationOpenStack": true,
-			"ExpandCSIVolumes":      true,
-		}
-	case c.CloudProvider.Vsphere != nil:
-		featureGates = map[string]bool{
-			"CSIMigrationvSphere": true,
-		}
-	default:
-		return nil, "", fail.ConfigValidation(fmt.Errorf("csi migration is not supported for selected provider"))
-	}
-
-	if complete {
-		for _, u := range c.InTreePluginUnregisterFeatureGate() {
-			featureGates[u] = true
-		}
+	featureGates, err := c.csiMigrationFeatureGates(complete)
+	if err != nil {
+		return nil, "", err
 	}
 
 	return featureGates, marshalFeatureGates(featureGates), nil
-}
-
-// CSIMigrationFeatureGates returns the name of the feature gate that's supposed to
-// unregister the in-tree cloud provider.
-// NB: This is a KubeOneCluster function because feature gates are Kubernetes-version dependent.
-func (c KubeOneCluster) InTreePluginUnregisterFeatureGate() []string {
-	lessThan21, _ := semver.NewConstraint("< 1.21.0")
-	ver, _ := semver.NewVersion(c.Versions.Kubernetes)
-
-	switch {
-	case c.CloudProvider.Azure != nil:
-		if lessThan21.Check(ver) {
-			return []string{"CSIMigrationAzureDiskComplete", "CSIMigrationAzureFileComplete"}
-		}
-
-		return []string{"InTreePluginAzureDiskUnregister", "InTreePluginAzureFileUnregister"}
-	case c.CloudProvider.Openstack != nil:
-		if lessThan21.Check(ver) {
-			return []string{"CSIMigrationOpenStackComplete"}
-		}
-
-		return []string{"InTreePluginOpenStackUnregister"}
-	case c.CloudProvider.Vsphere != nil:
-		if lessThan21.Check(ver) {
-			return []string{"CSIMigrationvSphereComplete"}
-		}
-
-		return []string{"InTreePluginvSphereUnregister"}
-	}
-
-	return nil
 }
 
 func marshalFeatureGates(fgm map[string]bool) string {
@@ -445,6 +406,22 @@ func (ads *Addons) RelativePath(manifestFilePath string) (string, error) {
 // This function is needed because the AssetsConfiguration API has been removed
 // in the v1beta2 API, so we can't use defaulting
 func (c *KubeOneCluster) DefaultAssetConfiguration() {
+	// IMPORTANT: Please pay attention to this part when removing AssetConfiguration.
+	// We allow overriding CoreDNS image in v1beta2 API.
+	// Priorities:
+	//  - 1st: c.Features.CoreDNS.ImageRepository (only v1beta2 API)
+	//         c.AssetConfiguration.CoreDNS.ImageRepository (only v1beta1 API)
+	//  - 2nd: c.RegistryConfiguration.OverwriteRegistry (both APIs)
+	// NOTE: We want to allow configuring CoreDNS ImageRepository even if
+	// OverwriteRegistry is not used (to avoid confusion since CoreDNS.ImageRepository is
+	// decoupled from OverwriteRegistry)
+	if c.Features.CoreDNS != nil {
+		c.AssetConfiguration.CoreDNS.ImageRepository = defaults(
+			c.AssetConfiguration.CoreDNS.ImageRepository, // If we're using v1beta2, this is going to be empty anyways
+			c.Features.CoreDNS.ImageRepository,
+		)
+	}
+
 	if c.RegistryConfiguration == nil || c.RegistryConfiguration.OverwriteRegistry == "" {
 		// We default AssetConfiguration only if RegistryConfiguration.OverwriteRegistry
 		// is used
@@ -485,4 +462,16 @@ func MapStringStringToString(m1 map[string]string, pairSeparator string) string 
 	sort.Strings(pairs)
 
 	return strings.Join(pairs, ",")
+}
+
+func (c ClusterNetworkConfig) HasIPv4() bool {
+	return c.IPFamily == IPFamilyIPv4 || c.IPFamily == IPFamilyIPv4IPv6 || c.IPFamily == IPFamilyIPv6IPv4
+}
+
+func (c ClusterNetworkConfig) HasIPv6() bool {
+	return c.IPFamily == IPFamilyIPv6 || c.IPFamily == IPFamilyIPv4IPv6 || c.IPFamily == IPFamilyIPv6IPv4
+}
+
+func (c IPFamily) IsDualstack() bool {
+	return c == IPFamilyIPv4IPv6 || c == IPFamilyIPv6IPv4
 }

@@ -172,7 +172,7 @@ spec:
             - "--cloud-provider=azure"
             - "--cluster-name={{ .Config.Name }}"
             - "--controllers=*,-cloud-node" # disable cloud-node controller
-            - "--configure-cloud-routes=true" # "false" for Azure CNI and "true" for other network plugins
+            - "--configure-cloud-routes=false" # "false" because we use VXLAN overlay
             - "--leader-elect=true"
             - "--route-reconciliation-period=10s"
             - "--v=4"
@@ -197,6 +197,12 @@ spec:
             - name: etc-ssl
               mountPath: /etc/ssl
               readOnly: true
+            - name: etc-pki
+              mountPath: /etc/pki
+              readOnly: true
+            - name: usr-share-ca-certs
+              mountPath: /usr/share/ca-certificates
+              readOnly: true
             - name: msi
               mountPath: /var/lib/waagent/ManagedIdentity-Settings
               readOnly: true
@@ -207,6 +213,12 @@ spec:
         - name: etc-ssl
           hostPath:
             path: /etc/ssl
+        - name: etc-pki
+          hostPath:
+            path: /etc/pki
+        - name: usr-share-ca-certs
+          hostPath:
+            path: /usr/share/ca-certificates
         - name: msi
           hostPath:
             path: /var/lib/waagent/ManagedIdentity-Settings

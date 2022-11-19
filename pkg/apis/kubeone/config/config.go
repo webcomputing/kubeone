@@ -167,6 +167,18 @@ func DefaultedV1Beta1KubeOneCluster(versionedCluster *kubeonev1beta1.KubeOneClus
 		return nil, err
 	}
 
+	// this can be nil if v1beta1 API was used as a source to convert into the internal API, since v1beta1 lacks the
+	// OperatingSystemManager field at all.
+	internalCluster.OperatingSystemManager = &kubeoneapi.OperatingSystemManagerConfig{
+		// but we don't want to enable the OSM for older v1beta1 API
+		Deploy: false,
+	}
+
+	// v1beta1 has no idea about NodeLocalDNS
+	internalCluster.Features.NodeLocalDNS = &kubeoneapi.NodeLocalDNS{
+		Deploy: true,
+	}
+
 	// Validate the configuration
 	if err := kubeonevalidation.ValidateKubeOneCluster(*internalCluster).ToAggregate(); err != nil {
 		return nil, fail.ConfigValidation(err)
@@ -336,5 +348,9 @@ func checkClusterFeatures(c kubeoneapi.KubeOneCluster, logger logrus.FieldLogger
 
 	if c.ContainerRuntime.Docker != nil {
 		logger.Warnf("Support for docker will be removed with Kubernetes 1.24 release. It is recommended to switch to containerd as container runtime using `kubeone migrate to-containerd`")
+	}
+
+	if c.CloudProvider.Vsphere != nil && !c.CloudProvider.External && len(c.CloudProvider.CSIConfig) > 0 {
+		logger.Warnf(".cloudProvider.csiConfig is provided, but is ignored when used with the in-tree cloud provider")
 	}
 }

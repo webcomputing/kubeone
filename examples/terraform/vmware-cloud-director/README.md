@@ -5,7 +5,7 @@ infrastructure for a Kubernetes HA cluster. Check out the following
 [Creating Infrastructure guide][docs-infrastructure] to learn more about how to
 use the configs and how to provision a Kubernetes cluster using KubeOne.
 
-[docs-infrastructure]: https://docs.kubermatic.com/kubeone/master/guides/using_terraform_configs/
+[docs-infrastructure]: https://docs.kubermatic.com/kubeone/main/guides/using-terraform-configs/
 
 ## Setup
 
@@ -63,6 +63,7 @@ No modules.
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | <a name="input_apiserver_alternative_names"></a> [apiserver\_alternative\_names](#input\_apiserver\_alternative\_names) | Subject alternative names for the API Server signing certificate | `list(string)` | `[]` | no |
+| <a name="input_bastion_host_key"></a> [bastion\_host\_key](#input\_bastion\_host\_key) | Bastion SSH host public key | `string` | `null` | no |
 | <a name="input_catalog_name"></a> [catalog\_name](#input\_catalog\_name) | Name of catalog that contains vApp templates | `string` | n/a | yes |
 | <a name="input_cluster_name"></a> [cluster\_name](#input\_cluster\_name) | Name of the cluster | `string` | n/a | yes |
 | <a name="input_control_plane_cpu_cores"></a> [control\_plane\_cpu\_cores](#input\_control\_plane\_cpu\_cores) | Number of cores per socket for the control plane VMs | `number` | `1` | no |
@@ -75,13 +76,14 @@ No modules.
 | <a name="input_external_network_ip"></a> [external\_network\_ip](#input\_external\_network\_ip) | IP address to which source addresses (the virtual machines) on outbound packets are translated to when they send traffic to the external network.<br>Defaults to default external network IP for the edge gateway. | `string` | `""` | no |
 | <a name="input_external_network_name"></a> [external\_network\_name](#input\_external\_network\_name) | Name of the external network to be used to send traffic to the external networks. Defaults to edge gateway's default external network. | `string` | `""` | no |
 | <a name="input_gateway_ip"></a> [gateway\_ip](#input\_gateway\_ip) | Gateway IP for the routed network | `string` | `"192.168.1.1"` | no |
-| <a name="input_initial_machinedeployment_operating_system_profile"></a> [initial\_machinedeployment\_operating\_system\_profile](#input\_initial\_machinedeployment\_operating\_system\_profile) | Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.<br>If not specified, the default value will be added by machine-controller addon. | `string` | `""` | no |
-| <a name="input_initial_machinedeployment_replicas"></a> [initial\_machinedeployment\_replicas](#input\_initial\_machinedeployment\_replicas) | number of replicas per MachineDeployment | `number` | `1` | no |
+| <a name="input_initial_machinedeployment_operating_system_profile"></a> [initial\_machinedeployment\_operating\_system\_profile](#input\_initial\_machinedeployment\_operating\_system\_profile) | Name of operating system profile for MachineDeployments, only applicable if operating-system-manager addon is enabled.<br>If not specified, the default value will be added by machine-controller addon. | `string` | `""` | no |
+| <a name="input_initial_machinedeployment_replicas"></a> [initial\_machinedeployment\_replicas](#input\_initial\_machinedeployment\_replicas) | number of replicas per MachineDeployment | `number` | `2` | no |
 | <a name="input_kubeapi_hostname"></a> [kubeapi\_hostname](#input\_kubeapi\_hostname) | DNS name for the kube-apiserver | `string` | `""` | no |
 | <a name="input_network_dns_server_1"></a> [network\_dns\_server\_1](#input\_network\_dns\_server\_1) | Primary DNS server for the routed network | `string` | `""` | no |
 | <a name="input_network_dns_server_2"></a> [network\_dns\_server\_2](#input\_network\_dns\_server\_2) | Secondary DNS server for the routed network. | `string` | `""` | no |
 | <a name="input_network_interface_type"></a> [network\_interface\_type](#input\_network\_interface\_type) | Type of interface for the routed network | `string` | `"internal"` | no |
 | <a name="input_ssh_agent_socket"></a> [ssh\_agent\_socket](#input\_ssh\_agent\_socket) | SSH Agent socket, default to grab from $SSH\_AUTH\_SOCK | `string` | `"env:SSH_AUTH_SOCK"` | no |
+| <a name="input_ssh_hosts_keys"></a> [ssh\_hosts\_keys](#input\_ssh\_hosts\_keys) | A list of SSH hosts public keys to verify | `list(string)` | `null` | no |
 | <a name="input_ssh_port"></a> [ssh\_port](#input\_ssh\_port) | SSH port to be used to provision instances | `number` | `22` | no |
 | <a name="input_ssh_private_key_file"></a> [ssh\_private\_key\_file](#input\_ssh\_private\_key\_file) | SSH private key file used to access instances | `string` | `""` | no |
 | <a name="input_ssh_public_key_file"></a> [ssh\_public\_key\_file](#input\_ssh\_public\_key\_file) | SSH public key file | `string` | `"~/.ssh/id_rsa.pub"` | no |
@@ -92,7 +94,7 @@ No modules.
 | <a name="input_vcd_vdc_name"></a> [vcd\_vdc\_name](#input\_vcd\_vdc\_name) | Virtual datacenter name | `string` | n/a | yes |
 | <a name="input_worker_cpu_cores"></a> [worker\_cpu\_cores](#input\_worker\_cpu\_cores) | Number of cores per socket for the worker VMs | `number` | `1` | no |
 | <a name="input_worker_cpus"></a> [worker\_cpus](#input\_worker\_cpus) | Number of CPUs for the worker VMs | `number` | `2` | no |
-| <a name="input_worker_disk_size"></a> [worker\_disk\_size](#input\_worker\_disk\_size) | Disk size for worker VMs in MB | `number` | `25600` | no |
+| <a name="input_worker_disk_size_gb"></a> [worker\_disk\_size\_gb](#input\_worker\_disk\_size\_gb) | Disk size for worker VMs in GB | `number` | `25` | no |
 | <a name="input_worker_disk_storage_profile"></a> [worker\_disk\_storage\_profile](#input\_worker\_disk\_storage\_profile) | Name of storage profile to use for worker VMs attached disks | `string` | `""` | no |
 | <a name="input_worker_memory"></a> [worker\_memory](#input\_worker\_memory) | Memory size of each worker VM in MB | `number` | `4096` | no |
 | <a name="input_worker_os"></a> [worker\_os](#input\_worker\_os) | OS to run on worker machines | `string` | `"ubuntu"` | no |

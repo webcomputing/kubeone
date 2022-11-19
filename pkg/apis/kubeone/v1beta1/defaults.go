@@ -102,7 +102,7 @@ func SetDefaults_Hosts(obj *KubeOneCluster) {
 	}
 
 	for idx := range obj.StaticWorkers.Hosts {
-		// continue assinging IDs after control plane hosts. This way every node gets a unique ID regardless of the different host slices
+		// continue assigning IDs after control plane hosts. This way every node gets a unique ID regardless of the different host slices
 		obj.StaticWorkers.Hosts[idx].ID = idx + len(obj.ControlPlane.Hosts)
 		defaultHostConfig(&obj.StaticWorkers.Hosts[idx])
 		if obj.StaticWorkers.Hosts[idx].Taints == nil {
@@ -134,15 +134,7 @@ func SetDefaults_ContainerRuntime(obj *KubeOneCluster) {
 		return
 	case obj.ContainerRuntime.Containerd != nil:
 		return
-	}
-
-	actualVer, err := semver.NewVersion(obj.Versions.Kubernetes)
-	if err != nil {
-		return
-	}
-
-	gteKube122Condition, _ := semver.NewConstraint(">= 1.22")
-	if gteKube122Condition.Check(actualVer) {
+	default:
 		obj.ContainerRuntime.Containerd = &ContainerRuntimeContainerd{}
 	}
 }

@@ -30,6 +30,19 @@ variable "apiserver_alternative_names" {
   type        = list(string)
 }
 
+variable "os" {
+  description = "Operating System to use for finding image reference and in MachineDeployment"
+
+  # valid choices are:
+  # * ubuntu
+  # * centos
+  # * rockylinux
+  # * rhel
+  # * flatcar
+  default = "ubuntu"
+  type    = string
+}
+
 variable "worker_os" {
   description = "OS to run on worker machines"
 
@@ -37,7 +50,9 @@ variable "worker_os" {
   # * ubuntu
   # * centos
   # * rockylinux
-  default = "ubuntu"
+  # * rhel
+  # * flatcar
+  default = ""
   type    = string
 }
 
@@ -55,7 +70,7 @@ variable "ssh_port" {
 
 variable "ssh_username" {
   description = "SSH user, used only in output"
-  default     = "ubuntu"
+  default     = ""
   type        = string
 }
 
@@ -71,10 +86,22 @@ variable "ssh_agent_socket" {
   type        = string
 }
 
+variable "ssh_hosts_keys" {
+  default     = null
+  description = "A list of SSH hosts public keys to verify"
+  type        = list(string)
+}
+
+variable "bastion_host_key" {
+  description = "Bastion SSH host public key"
+  default     = null
+  type        = string
+}
+
 variable "disable_kubeapi_loadbalancer" {
   type        = bool
   default     = false
-  description = "E2E tests specific varible to disable usage of any loadbalancer in front of kubeapi-server"
+  description = "E2E tests specific variable to disable usage of any loadbalancer in front of kubeapi-server"
 }
 
 # Provider specific settings
@@ -83,6 +110,98 @@ variable "location" {
   description = "Azure datacenter to use"
   default     = "westeurope"
   type        = string
+}
+
+variable "image_references" {
+  description = "map with image references used for control plane"
+  type = map(object({
+    image = object({
+      publisher = string
+      offer     = string
+      sku       = string
+      version   = string
+    })
+    plan = list(object({
+      name      = string
+      publisher = string
+      product   = string
+    }))
+    ssh_username = string
+    worker_os    = string
+  }))
+  default = {
+    ubuntu = {
+      image = {
+        publisher = "Canonical"
+        offer     = "0001-com-ubuntu-server-jammy"
+        sku       = "22_04-lts"
+        version   = "latest"
+      }
+      plan         = []
+      ssh_username = "ubuntu"
+      worker_os    = "ubuntu"
+    }
+
+    centos = {
+      image = {
+        publisher = "OpenLogic"
+        offer     = "CentOS"
+        sku       = "7_9"
+        version   = "latest"
+      }
+      plan         = []
+      ssh_username = "centos"
+      worker_os    = "centos"
+    }
+
+    flatcar = {
+      image = {
+        publisher = "kinvolk"
+        offer     = "flatcar-container-linux"
+        sku       = "stable"
+        version   = "3227.2.1"
+      }
+      plan = [{
+        name      = "stable"
+        publisher = "kinvolk"
+        product   = "flatcar-container-linux"
+      }]
+      ssh_username = "core"
+      worker_os    = "flatcar"
+    }
+
+    rhel = {
+      image = {
+        publisher = "RedHat"
+        offer     = "rhel-byos"
+        sku       = "rhel-lvm85"
+        version   = "8.5.20220316"
+      }
+      plan = [{
+        name      = "rhel-lvm85"
+        publisher = "redhat"
+        product   = "rhel-byos"
+      }]
+      ssh_username = "rhel-user"
+      worker_os    = "rhel"
+    }
+
+    rockylinux = {
+      image = {
+        publisher = "procomputers"
+        offer     = "rocky-linux-8-5"
+        sku       = "rocky-linux-8-5"
+        version   = "8.5.20211118"
+      }
+      plan = [{
+        name      = "rocky-linux-8-5"
+        publisher = "procomputers"
+        product   = "rocky-linux-8-5"
+      }]
+      ssh_username = "rocky"
+      worker_os    = "rockylinux"
+    }
+  }
 }
 
 variable "control_plane_vm_size" {
@@ -105,7 +224,7 @@ variable "control_plane_vm_count" {
 
 variable "initial_machinedeployment_replicas" {
   description = "Number of replicas per MachineDeployment"
-  default     = 1
+  default     = 2
   type        = number
 }
 
@@ -113,7 +232,29 @@ variable "initial_machinedeployment_operating_system_profile" {
   default     = ""
   type        = string
   description = <<EOF
-Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.
+Name of operating system profile for MachineDeployments, only applicable if operating-system-manager addon is enabled.
 If not specified, the default value will be added by machine-controller addon.
 EOF
+}
+
+# RHEL subscription
+variable "rhsm_username" {
+  description = "RHSM username"
+  default     = ""
+  type        = string
+  sensitive   = true
+}
+
+variable "rhsm_password" {
+  description = "RHSM password"
+  default     = ""
+  type        = string
+  sensitive   = true
+}
+
+variable "rhsm_offline_token" {
+  description = "RHSM offline token"
+  default     = ""
+  type        = string
+  sensitive   = true
 }

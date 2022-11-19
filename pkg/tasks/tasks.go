@@ -79,8 +79,8 @@ func WithBinariesOnly(t Tasks) Tasks {
 }
 
 // WithHostnameOS will prepend passed tasks with 2 basic tasks:
-//  * detect OS on all cluster hosts
-//  * detect hostnames  on all cluster hosts
+//   - detect OS on all cluster hosts
+//   - detect hostnames  on all cluster hosts
 func WithHostnameOS(t Tasks) Tasks {
 	return t.prepend(
 		Task{Fn: determineHostname, Operation: "detecting hostname"},
@@ -171,6 +171,31 @@ func WithFullInstall(t Tasks) Tasks {
 		append(WithResources(nil)...).
 		append(
 			Task{
+				// Node might emit one more CSR for kubelet serving certificates
+				// after external CCM initializes the node. That's because
+				// CCM modifies IP addresses in the Node object to properly set
+				// private and public addresses, DNS names, etc...
+				// To ensure that we approve those CSRs, we need to force kubelet
+				// to generate new CSRs as soon as possible, and then approve
+				// those new CSRs.
+				// NB: We intentionally do this only on FullInstall because in
+				// other cases we already have CCM deployed, so this is not
+				// an issue. Additionally, we do this only for control plane
+				// nodes because static workers are joined after the CCM is
+				// deployed.
+				Fn: func(s *state.State) error {
+					if err := restartKubeletOnControlPlane(s); err != nil {
+						return err
+					}
+
+					return s.RunTaskOnAllNodes(approvePendingCSR, true)
+				},
+				Operation: "removing old and approving new kubelet CSRs",
+				Predicate: func(s *state.State) bool { return s.Cluster.CloudProvider.External },
+			},
+		).
+		append(
+			Task{
 				Fn:        createMachineDeployments,
 				Operation: "creating worker machines",
 				Predicate: func(s *state.State) bool { return !s.LiveCluster.IsProvisioned() },
@@ -223,6 +248,7 @@ func WithResources(t Tasks) Tasks {
 				Fn:          credentials.Ensure,
 				Operation:   "ensuring credentials secret",
 				Description: "ensure credential",
+				Predicate:   func(s *state.State) bool { return s.Cluster.CloudProvider.SecretProviderClassName == "" },
 			},
 			{
 				Fn:          addons.Ensure,
@@ -268,7 +294,7 @@ func WithResources(t Tasks) Tasks {
 			{
 				Fn:        operatingsystemmanager.WaitReady,
 				Operation: "waiting for operating-system-manager",
-				Predicate: func(s *state.State) bool { return s.Cluster.OperatingSystemManagerEnabled() },
+				Predicate: func(s *state.State) bool { return s.Cluster.OperatingSystemManager.Deploy },
 			},
 		}...,
 	)
@@ -335,7 +361,7 @@ func WithContainerDMigration(t Tasks) Tasks {
 			{
 				Fn: func(s *state.State) error {
 					s.Logger.Warn("Now please rolling restart your machineDeployments to get containerd")
-					s.Logger.Warn("see more at: https://docs.kubermatic.com/kubeone/v1.4/cheat_sheets/rollout_machinedeployment/")
+					s.Logger.Warn("see more at: https://docs.kubermatic.com/kubeone/main/cheat-sheets/rollout-machinedeployment/")
 
 					return nil
 				},
@@ -484,8 +510,7 @@ func WithCCMCSIMigration(t Tasks) Tasks {
 	}...).
 		append(kubernetesConfigFiles()...).
 		append(
-			Task{Fn: ccmMigrationRegenerateControlPlaneManifests, Operation: "regenerating static pod manifests"},
-			Task{Fn: ccmMigrationUpdateControlPlaneKubeletConfig, Operation: "updating kubelet config on control plane nodes"},
+			Task{Fn: ccmMigrationRegenerateControlPlaneManifestsAndKubeletConfig, Operation: "regenerating static pod manifests and kubelet config"},
 			Task{
 				Fn:        ccmMigrationUpdateStaticWorkersKubeletConfig,
 				Operation: "updating kubelet config on static worker nodes",
@@ -504,7 +529,7 @@ func WithCCMCSIMigration(t Tasks) Tasks {
 			Task{
 				Fn: func(s *state.State) error {
 					s.Logger.Warn("Now please rolling restart your machineDeployments to migrate to ccm/csi")
-					s.Logger.Warn("see more at: https://docs.kubermatic.com/kubeone/v1.4/cheat_sheets/rollout_machinedeployment/")
+					s.Logger.Warn("see more at: https://docs.kubermatic.com/kubeone/main/cheat-sheets/rollout-machinedeployment/")
 					s.Logger.Warn("Once you're done, please run this command again with the '--complete' flag to finish migration")
 
 					return nil

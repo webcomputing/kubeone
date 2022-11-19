@@ -9,21 +9,21 @@ use the configs and how to provision a Kubernetes cluster using KubeOne.
 
 See the [Terraform loadbalancers in examples document][docs-tf-loadbalancer].
 
-[docs-infrastructure]: https://docs.kubermatic.com/kubeone/master/guides/using_terraform_configs/
-[docs-tf-loadbalancer]: https://docs.kubermatic.com/kubeone/master/examples/ha_load_balancing/
+[docs-infrastructure]: https://docs.kubermatic.com/kubeone/main/guides/using-terraform-configs/
+[docs-tf-loadbalancer]: https://docs.kubermatic.com/kubeone/main/examples/ha-load-balancing/
 
 ## Requirements
 
 | Name | Version |
 |------|---------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.0.0 |
-| <a name="requirement_metal"></a> [metal](#requirement\_metal) | ~> 3.2.0 |
+| <a name="requirement_metal"></a> [metal](#requirement\_metal) | ~> 3.3.0 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| <a name="provider_metal"></a> [metal](#provider\_metal) | ~> 3.2.0 |
+| <a name="provider_metal"></a> [metal](#provider\_metal) | ~> 3.3.0 |
 | <a name="provider_null"></a> [null](#provider\_null) | n/a |
 
 ## Modules
@@ -44,16 +44,18 @@ No modules.
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | <a name="input_apiserver_alternative_names"></a> [apiserver\_alternative\_names](#input\_apiserver\_alternative\_names) | subject alternative names for the API Server signing cert. | `list(string)` | `[]` | no |
+| <a name="input_bastion_host_key"></a> [bastion\_host\_key](#input\_bastion\_host\_key) | Bastion SSH host public key | `string` | `null` | no |
 | <a name="input_cluster_name"></a> [cluster\_name](#input\_cluster\_name) | Name of the cluster | `string` | n/a | yes |
-| <a name="input_control_plane_operating_system"></a> [control\_plane\_operating\_system](#input\_control\_plane\_operating\_system) | Image to use for control plane provisioning | `string` | `"ubuntu_18_04"` | no |
-| <a name="input_device_type"></a> [device\_type](#input\_device\_type) | type (size) of the device | `string` | `"c3.small.x86"` | no |
-| <a name="input_facility"></a> [facility](#input\_facility) | Facility (datacenter) | `string` | `"ams1"` | no |
-| <a name="input_initial_machinedeployment_operating_system_profile"></a> [initial\_machinedeployment\_operating\_system\_profile](#input\_initial\_machinedeployment\_operating\_system\_profile) | Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.<br>If not specified, the default value will be added by machine-controller addon. | `string` | `""` | no |
-| <a name="input_initial_machinedeployment_replicas"></a> [initial\_machinedeployment\_replicas](#input\_initial\_machinedeployment\_replicas) | Number of replicas per MachineDeployment | `number` | `1` | no |
-| <a name="input_lb_device_type"></a> [lb\_device\_type](#input\_lb\_device\_type) | type (size) of the load balancer device | `string` | `"c3.small.x86"` | no |
-| <a name="input_lb_operating_system"></a> [lb\_operating\_system](#input\_lb\_operating\_system) | Image to use for loadbalancer provisioning | `string` | `"ubuntu_18_04"` | no |
+| <a name="input_control_plane_operating_system"></a> [control\_plane\_operating\_system](#input\_control\_plane\_operating\_system) | Image to use for control plane provisioning | `string` | `"ubuntu_22_04"` | no |
+| <a name="input_device_type"></a> [device\_type](#input\_device\_type) | type (size) of the device | `string` | `"m3.small.x86"` | no |
+| <a name="input_initial_machinedeployment_operating_system_profile"></a> [initial\_machinedeployment\_operating\_system\_profile](#input\_initial\_machinedeployment\_operating\_system\_profile) | Name of operating system profile for MachineDeployments, only applicable if operating-system-manager addon is enabled.<br>If not specified, the default value will be added by machine-controller addon. | `string` | `""` | no |
+| <a name="input_initial_machinedeployment_replicas"></a> [initial\_machinedeployment\_replicas](#input\_initial\_machinedeployment\_replicas) | Number of replicas per MachineDeployment | `number` | `2` | no |
+| <a name="input_lb_device_type"></a> [lb\_device\_type](#input\_lb\_device\_type) | type (size) of the load balancer device | `string` | `"m3.small.x86"` | no |
+| <a name="input_lb_operating_system"></a> [lb\_operating\_system](#input\_lb\_operating\_system) | Image to use for loadbalancer provisioning | `string` | `"ubuntu_22_04"` | no |
+| <a name="input_metro"></a> [metro](#input\_metro) | Metro area for cluster | `string` | `"AM"` | no |
 | <a name="input_project_id"></a> [project\_id](#input\_project\_id) | project ID | `string` | n/a | yes |
 | <a name="input_ssh_agent_socket"></a> [ssh\_agent\_socket](#input\_ssh\_agent\_socket) | SSH Agent socket, default to grab from $SSH\_AUTH\_SOCK | `string` | `"env:SSH_AUTH_SOCK"` | no |
+| <a name="input_ssh_hosts_keys"></a> [ssh\_hosts\_keys](#input\_ssh\_hosts\_keys) | A list of SSH hosts public keys to verify | `list(string)` | `null` | no |
 | <a name="input_ssh_port"></a> [ssh\_port](#input\_ssh\_port) | SSH port to be used to provision instances | `number` | `22` | no |
 | <a name="input_ssh_private_key_file"></a> [ssh\_private\_key\_file](#input\_ssh\_private\_key\_file) | SSH private key file used to access instances | `string` | `""` | no |
 | <a name="input_ssh_public_key_file"></a> [ssh\_public\_key\_file](#input\_ssh\_public\_key\_file) | SSH public key file | `string` | `"~/.ssh/id_rsa.pub"` | no |

@@ -62,6 +62,9 @@ type KubeOneCluster struct {
 	// MachineController configures the Kubermatic machine-controller component.
 	MachineController *MachineControllerConfig `json:"machineController,omitempty"`
 
+	// OperatingSystemManager configures the Kubermatic operating-system-manager component.
+	OperatingSystemManager *OperatingSystemManagerConfig `json:"operatingSystemManager,omitempty"`
+
 	// CABundle PEM encoded global CA
 	CABundle string `json:"caBundle,omitempty"`
 
@@ -161,6 +164,10 @@ type HostConfig struct {
 	// PublicAddress is externally accessible IP address from public internet.
 	PublicAddress string `json:"publicAddress"`
 
+	// IPv6Addresses is IPv6 addresses of the node, only the first one will be announced to the k8s control plane.
+	// It is a list because you can request lots of IPv6 addresses (for example in case you want to assign one address per service).
+	IPv6Addresses []string `json:"ipv6Addresses"`
+
 	// PrivateAddress is internal RFC-1918 IP address.
 	PrivateAddress string `json:"privateAddress"`
 
@@ -175,6 +182,9 @@ type HostConfig struct {
 	// SSHPrivateKeyFile is path to the file with PRIVATE AND CLEANTEXT ssh key.
 	// Default value is "".
 	SSHPrivateKeyFile string `json:"sshPrivateKeyFile,omitempty"`
+
+	// SSHHostPublicKey if not empty, will be used to verify remote host public key
+	SSHHostPublicKey []byte `json:"sshHostPublicKey,omitempty"`
 
 	// SSHAgentSocket path (or reference to the environment) to the SSH agent unix domain socket.
 	// Default value is "env:SSH_AUTH_SOCK".
@@ -191,6 +201,9 @@ type HostConfig struct {
 	// BastionUser is system login name to use when connecting to bastion host.
 	// Default value is "root".
 	BastionUser string `json:"bastionUser,omitempty"`
+
+	// BastionHostPublicKey if not empty, will be used to verify bastion SSH public key
+	BastionHostPublicKey []byte `json:"bastionHostPublicKey,omitempty"`
 
 	// Hostname is the hostname(1) of the host.
 	// Default value is populated at the runtime via running `hostname -f` command over ssh.
@@ -274,6 +287,9 @@ type CloudProviderSpec struct {
 
 	// CSIConfig
 	CSIConfig string `json:"csiConfig,omitempty"`
+
+	// SecretProviderClassName
+	SecretProviderClassName string `json:"secretProviderClassName,omitempty"`
 
 	// AWS
 	AWS *AWSSpec `json:"aws,omitempty"`
@@ -362,9 +378,17 @@ type ClusterNetworkConfig struct {
 	// default value is "10.244.0.0/16"
 	PodSubnet string `json:"podSubnet,omitempty"`
 
+	// PodSubnetIPv6
+	// default value is ""fd01::/48""
+	PodSubnetIPv6 string `json:"podSubnetIPv6,omitempty"`
+
 	// ServiceSubnet
 	// default value is "10.96.0.0/12"
 	ServiceSubnet string `json:"serviceSubnet,omitempty"`
+
+	// ServiceSubnetIPv6
+	// default value is "fd02::/120"
+	ServiceSubnetIPv6 string `json:"serviceSubnetIPv6,omitempty"`
 
 	// ServiceDomainName
 	// default value is "cluster.local"
@@ -380,7 +404,32 @@ type ClusterNetworkConfig struct {
 
 	// KubeProxy config
 	KubeProxy *KubeProxyConfig `json:"kubeProxy,omitempty"`
+
+	// IPFamily allows specifying IP family of a cluster.
+	// Valid values are IPv4 | IPv6 | IPv4+IPv6 | IPv6+IPv4.
+	IPFamily IPFamily `json:"ipFamily,omitempty"`
+
+	// NodeCIDRMaskSizeIPv4 is the mask size used to address the nodes within provided IPv4 Pods CIDR. It has to be larger than the provided IPv4 Pods CIDR. Defaults to 24.
+	NodeCIDRMaskSizeIPv4 *int `json:"nodeCIDRMaskSizeIPv4,omitempty"`
+
+	// NodeCIDRMaskSizeIPv6 is the mask size used to address the nodes within provided IPv6 Pods CIDR. It has to be larger than the provided IPv6 Pods CIDR. Defaults to 64.
+	NodeCIDRMaskSizeIPv6 *int `json:"nodeCIDRMaskSizeIPv6,omitempty"`
 }
+
+// IPFamily allows specifying IP family of a cluster.
+// Valid values are IPv4 | IPv6 | IPv4+IPv6 | IPv6+IPv4.
+type IPFamily string
+
+const (
+	// IPFamilyIPv4 IPv4 only cluster.
+	IPFamilyIPv4 IPFamily = "IPv4"
+	// IPFamilyIPv6 IPv6 only cluster.
+	IPFamilyIPv6 IPFamily = "IPv6"
+	// IPFamilyIPv4IPv6 Dualstack cluster with IPv4 as primary address family.
+	IPFamilyIPv4IPv6 IPFamily = "IPv4+IPv6"
+	// IPFamilyIPv6IPv4 Dualstack cluster with IPv6 as primary address family.
+	IPFamilyIPv6IPv4 IPFamily = "IPv6+IPv4"
+)
 
 // KubeProxyConfig defines configured kube-proxy mode, default is iptables mode
 type KubeProxyConfig struct {
@@ -570,6 +619,9 @@ type ProviderStaticNetworkConfig struct {
 
 	// DNS
 	DNS DNSConfig `json:"dns"`
+
+	// IPFamily
+	IPFamily IPFamily `json:"ipFamily"`
 }
 
 // MachineControllerConfig configures kubermatic machine-controller deployment
@@ -578,29 +630,10 @@ type MachineControllerConfig struct {
 	Deploy bool `json:"deploy,omitempty"`
 }
 
-// Features controls what features will be enabled on the cluster
-type Features struct {
-	// PodNodeSelector
-	PodNodeSelector *PodNodeSelector `json:"podNodeSelector,omitempty"`
-
-	// PodSecurityPolicy
-	// Deprecated: will be removed once Kubernetes 1.24 reaches EOL
-	PodSecurityPolicy *PodSecurityPolicy `json:"podSecurityPolicy,omitempty"`
-
-	// StaticAuditLog
-	StaticAuditLog *StaticAuditLog `json:"staticAuditLog,omitempty"`
-
-	// DynamicAuditLog
-	DynamicAuditLog *DynamicAuditLog `json:"dynamicAuditLog,omitempty"`
-
-	// MetricsServer
-	MetricsServer *MetricsServer `json:"metricsServer,omitempty"`
-
-	// OpenIDConnect
-	OpenIDConnect *OpenIDConnect `json:"openidConnect,omitempty"`
-
-	// Encryption Providers
-	EncryptionProviders *EncryptionProviders `json:"encryptionProviders,omitempty"`
+// OperatingSystemManagerConfig configures kubermatic operating-system-manager deployment.
+type OperatingSystemManagerConfig struct {
+	// Deploy
+	Deploy bool `json:"deploy,omitempty"`
 }
 
 // SystemPackages controls configurations of APT/YUM
@@ -641,6 +674,56 @@ type RegistryConfiguration struct {
 	// in OverwriteRegistry as an insecure registry. This is also propagated
 	// to the worker nodes managed by machine-controller and/or KubeOne.
 	InsecureRegistry bool `json:"insecureRegistry,omitempty"`
+}
+
+// Features controls what features will be enabled on the cluster
+type Features struct {
+	// CoreDNS
+	CoreDNS *CoreDNS `json:"coreDNS,omitempty"`
+
+	// PodNodeSelector
+	PodNodeSelector *PodNodeSelector `json:"podNodeSelector,omitempty"`
+
+	// PodSecurityPolicy
+	// Deprecated: will be removed once Kubernetes 1.24 reaches EOL
+	PodSecurityPolicy *PodSecurityPolicy `json:"podSecurityPolicy,omitempty"`
+
+	// StaticAuditLog
+	StaticAuditLog *StaticAuditLog `json:"staticAuditLog,omitempty"`
+
+	// DynamicAuditLog
+	DynamicAuditLog *DynamicAuditLog `json:"dynamicAuditLog,omitempty"`
+
+	// MetricsServer
+	MetricsServer *MetricsServer `json:"metricsServer,omitempty"`
+
+	// OpenIDConnect
+	OpenIDConnect *OpenIDConnect `json:"openidConnect,omitempty"`
+
+	// Encryption Providers
+	EncryptionProviders *EncryptionProviders `json:"encryptionProviders,omitempty"`
+
+	// NodeLocalDNS config
+	NodeLocalDNS *NodeLocalDNS `json:"nodeLocalDNS,omitempty"`
+}
+
+type NodeLocalDNS struct {
+	// Deploy is enabled by default
+	Deploy bool `json:"deploy,omitempty"`
+}
+
+type CoreDNS struct {
+	Replicas                  *int32 `json:"replicas,omitempty"`
+	DeployPodDisruptionBudget *bool  `json:"deployPodDisruptionBudget,omitempty"`
+
+	// ImageRepository allows users to specify the image registry to be used
+	// for CoreDNS. Kubeadm automatically appends `/coredns` at the end, so it's
+	// not necessary to specify it.
+	// By default it's empty, which means it'll be defaulted based on kubeadm
+	// defaults and if overwriteRegistry feature is used.
+	// ImageRepository has the highest priority, meaning that it'll override
+	// overwriteRegistry if specified.
+	ImageRepository string `json:"imageRepository,omitempty"`
 }
 
 // PodNodeSelector feature flag

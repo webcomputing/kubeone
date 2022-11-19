@@ -62,23 +62,26 @@ func TestValidateKubeOneCluster(t *testing.T) {
 					AWS: &kubeoneapi.AWSSpec{},
 				},
 				Versions: kubeoneapi.VersionConfig{
-					Kubernetes: "1.22.1",
+					Kubernetes: "1.25.4",
 				},
 				MachineController: &kubeoneapi.MachineControllerConfig{
+					Deploy: true,
+				},
+				OperatingSystemManager: &kubeoneapi.OperatingSystemManagerConfig{
 					Deploy: true,
 				},
 				DynamicWorkers: []kubeoneapi.DynamicWorkerConfig{
 					{
 						Name:     "test-1",
-						Replicas: intPtr(3),
+						Replicas: pointer.Int(3),
 					},
 					{
 						Name:     "test-2",
-						Replicas: intPtr(5),
+						Replicas: pointer.Int(5),
 					},
 					{
 						Name:     "test-3",
-						Replicas: intPtr(0),
+						Replicas: pointer.Int(0),
 					},
 				},
 			},
@@ -112,23 +115,26 @@ func TestValidateKubeOneCluster(t *testing.T) {
 					AWS: &kubeoneapi.AWSSpec{},
 				},
 				Versions: kubeoneapi.VersionConfig{
-					Kubernetes: "1.22.1",
+					Kubernetes: "1.25.4",
 				},
 				MachineController: &kubeoneapi.MachineControllerConfig{
+					Deploy: false,
+				},
+				OperatingSystemManager: &kubeoneapi.OperatingSystemManagerConfig{
 					Deploy: false,
 				},
 				DynamicWorkers: []kubeoneapi.DynamicWorkerConfig{
 					{
 						Name:     "test-1",
-						Replicas: intPtr(3),
+						Replicas: pointer.Int(3),
 					},
 					{
 						Name:     "test-2",
-						Replicas: intPtr(5),
+						Replicas: pointer.Int(5),
 					},
 					{
 						Name:     "test-3",
-						Replicas: intPtr(0),
+						Replicas: pointer.Int(0),
 					},
 				},
 			},
@@ -162,30 +168,33 @@ func TestValidateKubeOneCluster(t *testing.T) {
 					AWS: &kubeoneapi.AWSSpec{},
 				},
 				Versions: kubeoneapi.VersionConfig{
-					Kubernetes: "1.22.1",
+					Kubernetes: "1.25.4",
 				},
 				MachineController: &kubeoneapi.MachineControllerConfig{
+					Deploy: true,
+				},
+				OperatingSystemManager: &kubeoneapi.OperatingSystemManagerConfig{
 					Deploy: true,
 				},
 				DynamicWorkers: []kubeoneapi.DynamicWorkerConfig{
 					{
 						Name:     "test-1",
-						Replicas: intPtr(3),
+						Replicas: pointer.Int(3),
 					},
 					{
 						Name:     "test-2",
-						Replicas: intPtr(5),
+						Replicas: pointer.Int(5),
 					},
 					{
 						Name:     "test-3",
-						Replicas: intPtr(0),
+						Replicas: pointer.Int(0),
 					},
 				},
 			},
 			expectedError: true,
 		},
 		{
-			name: "vSphere 1.22.0 cluster",
+			name: "vSphere 1.25.4 cluster",
 			cluster: kubeoneapi.KubeOneCluster{
 				Name: "test",
 				ControlPlane: kubeoneapi.ControlPlaneConfig{
@@ -212,23 +221,26 @@ func TestValidateKubeOneCluster(t *testing.T) {
 					Vsphere: &kubeoneapi.VsphereSpec{},
 				},
 				Versions: kubeoneapi.VersionConfig{
-					Kubernetes: "1.22.1",
+					Kubernetes: "1.25.4",
 				},
 				MachineController: &kubeoneapi.MachineControllerConfig{
+					Deploy: true,
+				},
+				OperatingSystemManager: &kubeoneapi.OperatingSystemManagerConfig{
 					Deploy: true,
 				},
 				DynamicWorkers: []kubeoneapi.DynamicWorkerConfig{
 					{
 						Name:     "test-1",
-						Replicas: intPtr(3),
+						Replicas: pointer.Int(3),
 					},
 					{
 						Name:     "test-2",
-						Replicas: intPtr(5),
+						Replicas: pointer.Int(5),
 					},
 					{
 						Name:     "test-3",
-						Replicas: intPtr(0),
+						Replicas: pointer.Int(0),
 					},
 				},
 			},
@@ -236,11 +248,19 @@ func TestValidateKubeOneCluster(t *testing.T) {
 		},
 	}
 
+	twentyFour := 24
 	for _, tc := range tests {
 		tc := tc
+		tc.cluster.ClusterNetwork = kubeoneapi.ClusterNetworkConfig{
+			IPFamily:             kubeoneapi.IPFamilyIPv4,
+			PodSubnet:            "10.20.30.40/16",
+			ServiceSubnet:        "10.30.30.40/16",
+			NodeCIDRMaskSizeIPv4: &twentyFour,
+		}
 		t.Run(tc.name, func(t *testing.T) {
 			errs := ValidateKubeOneCluster(tc.cluster)
 			if (len(errs) == 0) == tc.expectedError {
+				t.Log(errs)
 				t.Errorf("test case failed: expected %v, but got %v", tc.expectedError, (len(errs) != 0))
 			}
 		})
@@ -319,6 +339,7 @@ func TestValidateControlPlaneConfig(t *testing.T) {
 	tests := []struct {
 		name               string
 		controlPlaneConfig kubeoneapi.ControlPlaneConfig
+		networkConfig      kubeoneapi.ClusterNetworkConfig
 		expectedError      bool
 	}{
 		{
@@ -377,7 +398,7 @@ func TestValidateControlPlaneConfig(t *testing.T) {
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			errs := ValidateControlPlaneConfig(tc.controlPlaneConfig, nil)
+			errs := ValidateControlPlaneConfig(tc.controlPlaneConfig, tc.networkConfig, nil)
 			if (len(errs) == 0) == tc.expectedError {
 				t.Errorf("test case failed: expected %v, but got %v", tc.expectedError, (len(errs) != 0))
 			}
@@ -655,12 +676,21 @@ func TestValidateCloudProviderSpec(t *testing.T) {
 			expectedError: true,
 		},
 		{
-			name: "vSphere provider config without csiConfig",
+			name: "vSphere provider config without csiConfig (external disabled)",
 			providerConfig: kubeoneapi.CloudProviderSpec{
 				Vsphere:     &kubeoneapi.VsphereSpec{},
 				CloudConfig: "test",
 			},
 			expectedError: false,
+		},
+		{
+			name: "vSphere provider config without csiConfig (external enabled)",
+			providerConfig: kubeoneapi.CloudProviderSpec{
+				Vsphere:     &kubeoneapi.VsphereSpec{},
+				External:    true,
+				CloudConfig: "test",
+			},
+			expectedError: true,
 		},
 		{
 			name: "vSphere provider config with csiConfig",
@@ -680,7 +710,7 @@ func TestValidateCloudProviderSpec(t *testing.T) {
 				CloudConfig: "test",
 				CSIConfig:   "test",
 			},
-			expectedError: true,
+			expectedError: false,
 		},
 		{
 			name: "OpenStack provider config without csiConfig",
@@ -723,53 +753,46 @@ func TestValidateVersionConfig(t *testing.T) {
 		expectedError bool
 	}{
 		{
-			name: "valid version config (1.23.1)",
+			name: "valid version config (1.25.4)",
 			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "1.23.1",
+				Kubernetes: "1.25.4",
 			},
 			expectedError: false,
 		},
 		{
-			name: "valid version config (1.22.1)",
+			name: "valid version config (1.25.0)",
 			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "1.22.1",
+				Kubernetes: "1.25.0",
 			},
 			expectedError: false,
 		},
 		{
-			name: "valid version config (1.22.0)",
-			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "1.22.2",
-			},
-			expectedError: false,
-		},
-		{
-			name: "valid version config (1.21.4)",
+			name: "not supported kubernetes version (1.21.4)",
 			versionConfig: kubeoneapi.VersionConfig{
 				Kubernetes: "1.21.4",
 			},
-			expectedError: false,
+			expectedError: true,
 		},
 		{
-			name: "valid version config (1.21.0)",
+			name: "not supported kubernetes version (1.21.0)",
 			versionConfig: kubeoneapi.VersionConfig{
 				Kubernetes: "1.21.0",
 			},
-			expectedError: false,
+			expectedError: true,
 		},
 		{
-			name: "valid version config (1.20.10)",
+			name: "not supported kubernetes version (1.20.10)",
 			versionConfig: kubeoneapi.VersionConfig{
 				Kubernetes: "1.20.10",
 			},
-			expectedError: false,
+			expectedError: true,
 		},
 		{
-			name: "valid version config (1.20.0)",
+			name: "not supported kubernetes version (1.20.0)",
 			versionConfig: kubeoneapi.VersionConfig{
 				Kubernetes: "1.20.0",
 			},
-			expectedError: false,
+			expectedError: true,
 		},
 		{
 			name: "not supported kubernetes version (1.99.0)",
@@ -816,7 +839,7 @@ func TestValidateVersionConfig(t *testing.T) {
 		{
 			name: "kubernetes version with a leading 'v'",
 			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "v1.22.1",
+				Kubernetes: "v1.25.4",
 			},
 			expectedError: true,
 		},
@@ -856,42 +879,42 @@ func TestValidateKubernetesSupport(t *testing.T) {
 		expectedError  bool
 	}{
 		{
-			name: "AWS 1.21.4 cluster",
+			name: "AWS 1.25.4 cluster",
 			providerConfig: kubeoneapi.CloudProviderSpec{
 				AWS: &kubeoneapi.AWSSpec{},
 			},
 			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "1.21.4",
+				Kubernetes: "1.25.4",
 			},
 			expectedError: false,
 		},
 		{
-			name: "AWS 1.22.1 cluster",
+			name: "AWS 1.25.4 cluster",
 			providerConfig: kubeoneapi.CloudProviderSpec{
 				AWS: &kubeoneapi.AWSSpec{},
 			},
 			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "1.22.1",
+				Kubernetes: "1.25.4",
 			},
 			expectedError: false,
 		},
 		{
-			name: "vSphere 1.22.4 cluster",
+			name: "vSphere 1.25.4 cluster",
 			providerConfig: kubeoneapi.CloudProviderSpec{
 				Vsphere: &kubeoneapi.VsphereSpec{},
 			},
 			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "1.22.4",
+				Kubernetes: "1.25.4",
 			},
 			expectedError: false,
 		},
 		{
-			name: "vSphere 1.25.0 cluster",
+			name: "vSphere 1.26.0 cluster",
 			providerConfig: kubeoneapi.CloudProviderSpec{
 				Vsphere: &kubeoneapi.VsphereSpec{},
 			},
 			versionConfig: kubeoneapi.VersionConfig{
-				Kubernetes: "1.25.0",
+				Kubernetes: "1.26.0",
 			},
 			expectedError: true,
 		},
@@ -982,16 +1005,20 @@ func TestValidateClusterNetworkConfig(t *testing.T) {
 		{
 			name: "valid network config",
 			clusterNetworkConfig: kubeoneapi.ClusterNetworkConfig{
-				PodSubnet:     "192.168.1.0/24",
-				ServiceSubnet: "192.168.0.0/24",
+				PodSubnet:            "192.168.1.0/16",
+				ServiceSubnet:        "192.168.0.0/16",
+				IPFamily:             kubeoneapi.IPFamilyIPv4,
+				NodeCIDRMaskSizeIPv4: ptr(24),
 			},
 			expectedError: false,
 		},
 		{
 			name: "valid network config with cni config",
 			clusterNetworkConfig: kubeoneapi.ClusterNetworkConfig{
-				PodSubnet:     "192.168.1.0/24",
-				ServiceSubnet: "192.168.0.0/24",
+				PodSubnet:            "192.168.1.0/16",
+				ServiceSubnet:        "192.168.0.0/16",
+				IPFamily:             kubeoneapi.IPFamilyIPv4,
+				NodeCIDRMaskSizeIPv4: ptr(24),
 				CNI: &kubeoneapi.CNI{
 					Canal: &kubeoneapi.CanalSpec{MTU: 1500},
 				},
@@ -1001,13 +1028,14 @@ func TestValidateClusterNetworkConfig(t *testing.T) {
 		{
 			name:                 "empty network config",
 			clusterNetworkConfig: kubeoneapi.ClusterNetworkConfig{},
-			expectedError:        false,
+			expectedError:        true,
 		},
 		{
 			name: "invalid pod subnet",
 			clusterNetworkConfig: kubeoneapi.ClusterNetworkConfig{
 				PodSubnet:     "192.168.1.0",
 				ServiceSubnet: "192.168.0.0/24",
+				IPFamily:      kubeoneapi.IPFamilyIPv4,
 			},
 			expectedError: true,
 		},
@@ -1016,16 +1044,84 @@ func TestValidateClusterNetworkConfig(t *testing.T) {
 			clusterNetworkConfig: kubeoneapi.ClusterNetworkConfig{
 				PodSubnet:     "192.168.1.0/24",
 				ServiceSubnet: "192.168.0.0",
+				IPFamily:      kubeoneapi.IPFamilyIPv4,
 			},
 			expectedError: true,
 		},
 		{
 			name: "invalid cni config",
 			clusterNetworkConfig: kubeoneapi.ClusterNetworkConfig{
+				IPFamily: kubeoneapi.IPFamilyIPv4,
 				CNI: &kubeoneapi.CNI{
 					Canal:    &kubeoneapi.CanalSpec{},
 					WeaveNet: &kubeoneapi.WeaveNetSpec{},
 				},
+			},
+			expectedError: true,
+		},
+		{
+			name: "valid ipv6 config",
+			clusterNetworkConfig: kubeoneapi.ClusterNetworkConfig{
+				IPFamily:             kubeoneapi.IPFamilyIPv6,
+				PodSubnetIPv6:        "fd01::/48",
+				ServiceSubnetIPv6:    "fd02::/120",
+				NodeCIDRMaskSizeIPv6: ptr(64),
+			},
+		},
+		{
+			name: "valid ipv4+ipv6 config",
+			clusterNetworkConfig: kubeoneapi.ClusterNetworkConfig{
+				IPFamily:             kubeoneapi.IPFamilyIPv4IPv6,
+				PodSubnet:            "10.244.0.0/16",
+				PodSubnetIPv6:        "fd01::/48",
+				ServiceSubnet:        "10.96.0.0/12",
+				ServiceSubnetIPv6:    "fd02::/120",
+				NodeCIDRMaskSizeIPv4: ptr(24),
+				NodeCIDRMaskSizeIPv6: ptr(64),
+			},
+		},
+		{
+			name: "valid ipv6+ipv4 config",
+			clusterNetworkConfig: kubeoneapi.ClusterNetworkConfig{
+				IPFamily:             kubeoneapi.IPFamilyIPv6IPv4,
+				PodSubnet:            "10.244.0.0/16",
+				PodSubnetIPv6:        "fd01::/48",
+				ServiceSubnet:        "10.96.0.0/12",
+				ServiceSubnetIPv6:    "fd02::/120",
+				NodeCIDRMaskSizeIPv4: ptr(24),
+				NodeCIDRMaskSizeIPv6: ptr(64),
+			},
+		},
+		{
+			name: "invalid ipv6+ipv4 config",
+			clusterNetworkConfig: kubeoneapi.ClusterNetworkConfig{
+				IPFamily:             kubeoneapi.IPFamilyIPv6IPv4,
+				PodSubnet:            "10.244.0.0/16,fd01::/48",
+				ServiceSubnet:        "10.96.0.0/12,fd02::/120",
+				NodeCIDRMaskSizeIPv4: ptr(24),
+				NodeCIDRMaskSizeIPv6: ptr(64),
+			},
+			expectedError: true,
+		},
+		{
+			name: "invalid nod cidr mask size",
+			clusterNetworkConfig: kubeoneapi.ClusterNetworkConfig{
+				IPFamily:             kubeoneapi.IPFamilyIPv4IPv6,
+				PodSubnet:            "10.244.0.0/16,fd01::/48",
+				ServiceSubnet:        "10.96.0.0/12,fd02::/120",
+				NodeCIDRMaskSizeIPv4: ptr(16),
+				NodeCIDRMaskSizeIPv6: ptr(48),
+			},
+			expectedError: true,
+		},
+		{
+			name: "invalid number of cidrs",
+			clusterNetworkConfig: kubeoneapi.ClusterNetworkConfig{
+				IPFamily:             kubeoneapi.IPFamilyIPv4IPv6,
+				PodSubnet:            "10.244.0.0/16",
+				ServiceSubnet:        "10.96.0.0/12,fd02::/120",
+				NodeCIDRMaskSizeIPv4: ptr(16),
+				NodeCIDRMaskSizeIPv6: ptr(48),
 			},
 			expectedError: true,
 		},
@@ -1035,6 +1131,7 @@ func TestValidateClusterNetworkConfig(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			errs := ValidateClusterNetworkConfig(tc.clusterNetworkConfig, nil)
 			if (len(errs) == 0) == tc.expectedError {
+				t.Log(errs)
 				t.Errorf("test case failed: expected %v, but got %v", tc.expectedError, (len(errs) != 0))
 			}
 		})
@@ -1122,6 +1219,7 @@ func TestValidateStaticWorkersConfig(t *testing.T) {
 	tests := []struct {
 		name                string
 		staticWorkersConfig kubeoneapi.StaticWorkersConfig
+		networkConfig       kubeoneapi.ClusterNetworkConfig
 		expectedError       bool
 	}{
 		{
@@ -1180,7 +1278,7 @@ func TestValidateStaticWorkersConfig(t *testing.T) {
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			errs := ValidateStaticWorkersConfig(tc.staticWorkersConfig, nil)
+			errs := ValidateStaticWorkersConfig(tc.staticWorkersConfig, tc.networkConfig, nil)
 			if (len(errs) == 0) == tc.expectedError {
 				t.Errorf("test case failed: expected %v, but got %v", tc.expectedError, (len(errs) != 0))
 			}
@@ -1199,15 +1297,15 @@ func TestValidateDynamicWorkerConfig(t *testing.T) {
 			dynamicWorkerConfig: []kubeoneapi.DynamicWorkerConfig{
 				{
 					Name:     "test-1",
-					Replicas: intPtr(3),
+					Replicas: pointer.Int(3),
 				},
 				{
 					Name:     "test-2",
-					Replicas: intPtr(5),
+					Replicas: pointer.Int(5),
 				},
 				{
 					Name:     "test-3",
-					Replicas: intPtr(0),
+					Replicas: pointer.Int(0),
 				},
 			},
 			expectedError: false,
@@ -1222,7 +1320,7 @@ func TestValidateDynamicWorkerConfig(t *testing.T) {
 			dynamicWorkerConfig: []kubeoneapi.DynamicWorkerConfig{
 				{
 					Name:     "test-1",
-					Replicas: intPtr(3),
+					Replicas: pointer.Int(3),
 				},
 				{
 					Name: "test-2",
@@ -1234,7 +1332,7 @@ func TestValidateDynamicWorkerConfig(t *testing.T) {
 			name: "invalid worker config (no name given)",
 			dynamicWorkerConfig: []kubeoneapi.DynamicWorkerConfig{
 				{
-					Replicas: intPtr(3),
+					Replicas: pointer.Int(3),
 				},
 			},
 			expectedError: true,
@@ -1244,7 +1342,7 @@ func TestValidateDynamicWorkerConfig(t *testing.T) {
 			dynamicWorkerConfig: []kubeoneapi.DynamicWorkerConfig{
 				{
 					Name:     "test-1",
-					Replicas: intPtr(3),
+					Replicas: pointer.Int(3),
 					Config: kubeoneapi.ProviderSpec{
 						MachineAnnotations: map[string]string{"test": "test"},
 					},
@@ -1257,7 +1355,7 @@ func TestValidateDynamicWorkerConfig(t *testing.T) {
 			dynamicWorkerConfig: []kubeoneapi.DynamicWorkerConfig{
 				{
 					Name:     "test-1",
-					Replicas: intPtr(3),
+					Replicas: pointer.Int(3),
 					Config: kubeoneapi.ProviderSpec{
 						NodeAnnotations: map[string]string{"test": "test"},
 					},
@@ -1270,7 +1368,7 @@ func TestValidateDynamicWorkerConfig(t *testing.T) {
 			dynamicWorkerConfig: []kubeoneapi.DynamicWorkerConfig{
 				{
 					Name:     "test-1",
-					Replicas: intPtr(3),
+					Replicas: pointer.Int(3),
 					Config: kubeoneapi.ProviderSpec{
 						MachineAnnotations: map[string]string{"test": "test"},
 						NodeAnnotations:    map[string]string{"test": "test"},
@@ -1341,7 +1439,7 @@ func TestValidateCABundle(t *testing.T) {
 		},
 		{
 			name:          "incorrect",
-			caBundle:      "garbadge",
+			caBundle:      "garbage",
 			expectedError: true,
 		},
 	}
@@ -1449,6 +1547,42 @@ func TestValidateFeatures(t *testing.T) {
 				PodNodeSelector: &kubeoneapi.PodNodeSelector{
 					Enable: true,
 					Config: kubeoneapi.PodNodeSelectorConfig{},
+				},
+			},
+			versions: kubeoneapi.VersionConfig{
+				Kubernetes: "1.20.2",
+			},
+			expectedError: true,
+		},
+		{
+			name: "coredns replicas > 0",
+			features: kubeoneapi.Features{
+				CoreDNS: &kubeoneapi.CoreDNS{
+					Replicas: pointer.Int32(2),
+				},
+			},
+			versions: kubeoneapi.VersionConfig{
+				Kubernetes: "1.20.2",
+			},
+			expectedError: false,
+		},
+		{
+			name: "coredns replicas = 0",
+			features: kubeoneapi.Features{
+				CoreDNS: &kubeoneapi.CoreDNS{
+					Replicas: pointer.Int32(0),
+				},
+			},
+			versions: kubeoneapi.VersionConfig{
+				Kubernetes: "1.20.2",
+			},
+			expectedError: false,
+		},
+		{
+			name: "coredns replicas < 0",
+			features: kubeoneapi.Features{
+				CoreDNS: &kubeoneapi.CoreDNS{
+					Replicas: pointer.Int32(-1),
 				},
 			},
 			versions: kubeoneapi.VersionConfig{
@@ -1690,6 +1824,7 @@ func TestValidateHostConfig(t *testing.T) {
 	tests := []struct {
 		name          string
 		hostConfig    []kubeoneapi.HostConfig
+		networkConfig kubeoneapi.ClusterNetworkConfig
 		expectedError bool
 	}{
 		{
@@ -1925,7 +2060,7 @@ func TestValidateHostConfig(t *testing.T) {
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			errs := ValidateHostConfig(tc.hostConfig, nil)
+			errs := ValidateHostConfig(tc.hostConfig, tc.networkConfig, nil)
 			if (len(errs) == 0) == tc.expectedError {
 				t.Errorf("test case failed: expected %v, but got %v", tc.expectedError, (len(errs) != 0))
 			}
@@ -2175,6 +2310,6 @@ func TestValidateAssetConfiguration(t *testing.T) {
 	}
 }
 
-func intPtr(i int) *int {
-	return &i
+func ptr[T any](x T) *T {
+	return &x
 }

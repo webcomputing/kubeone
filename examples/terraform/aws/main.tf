@@ -34,8 +34,7 @@ locals {
   kubeapi_endpoint      = var.disable_kubeapi_loadbalancer ? aws_instance.control_plane.0.private_ip : aws_elb.control_plane.0.dns_name
   loadbalancer_count    = var.disable_kubeapi_loadbalancer ? 0 : 1
 
-  initial_machinedeployment_spotinstances            = var.initial_machinedeployment_spotinstances_max_price > 0
-  initial_machinedeployment_operating_system_profile = var.initial_machinedeployment_operating_system_profile == "" ? var.ami_filters[var.os].osp_name : var.initial_machinedeployment_operating_system_profile
+  initial_machinedeployment_spotinstances = var.initial_machinedeployment_spotinstances_max_price > 0
 
   subnets = {
     (local.zoneA) = length(aws_subnet.public.*.id) > 0 ? aws_subnet.public[0].id : ""
@@ -126,7 +125,7 @@ resource "aws_security_group_rule" "ingress_self_allow_all" {
   type              = "ingress"
   security_group_id = aws_security_group.common.id
 
-  description = "allow all incomming traffic from members of this group"
+  description = "allow all incoming traffic from members of this group"
   from_port   = 0
   to_port     = 0
   protocol    = "-1"
@@ -187,7 +186,7 @@ resource "aws_security_group" "ssh" {
   vpc_id      = data.aws_vpc.selected.id
 
   ingress {
-    description = "allow incomming SSH"
+    description = "allow incoming SSH"
     from_port   = var.ssh_port
     to_port     = var.ssh_port
     protocol    = "tcp"

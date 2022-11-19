@@ -17,6 +17,10 @@ limitations under the License.
 package addons
 
 import (
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
@@ -38,6 +42,10 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+const (
+	webhookCertsCSI = "CSI"
+)
+
 var (
 	kubectlApplyScript = heredoc.Doc(`
 		sudo KUBECONFIG=/etc/kubernetes/admin.conf \
@@ -54,7 +62,7 @@ var (
 type applier struct {
 	TemplateData templateData
 	LocalFS      fs.FS
-	EmbededFS    fs.FS
+	EmbeddedFS   fs.FS
 }
 
 // TemplateData is data available in the addons render template
@@ -63,12 +71,17 @@ type templateData struct {
 	Certificates                             map[string]string
 	Credentials                              map[string]string
 	CredentialsCCM                           map[string]string
+	CredentialsCCMHash                       string
 	CCMClusterName                           string
 	CSIMigration                             bool
 	CSIMigrationFeatureGates                 string
+	CalicoIptablesBackend                    string
+	DeployCSIAddon                           bool
 	MachineControllerCredentialsEnvVars      string
+	MachineControllerCredentialsHash         string
 	OperatingSystemManagerEnabled            bool
 	OperatingSystemManagerCredentialsEnvVars string
+	OperatingSystemManagerCredentialsHash    string
 	RegistryCredentials                      []registryCredentialsContainer
 	InternalImages                           *internalImages
 	Resources                                map[string]string
@@ -92,6 +105,11 @@ func newAddonsApplier(s *state.State) (*applier, error) {
 	}
 
 	credsEnvVarsMC, err := mcCredentialsEnvVars(s)
+	if err != nil {
+		return nil, err
+	}
+
+	mcCredsHash, err := credentialsHash(s, credentials.TypeMC)
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +171,23 @@ func newAddonsApplier(s *state.State) (*applier, error) {
 		return nil, err
 	}
 
+	credsCCMHash, err := credentialsHash(s, credentials.TypeCCM)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check are we deploying the CSI driver
+	deployCSI := len(ensureCSIAddons(s, []addonAction{})) > 0
+
+	calicoIptablesBackend := "Auto"
+	for _, cp := range s.LiveCluster.ControlPlane {
+		if cp.Config.OperatingSystem == kubeoneapi.OperatingSystemNameFlatcar || cp.Config.OperatingSystem == kubeoneapi.OperatingSystemNameRHEL {
+			calicoIptablesBackend = "NFT"
+
+			break
+		}
+	}
+
 	data := templateData{
 		Config: s.Cluster,
 		Certificates: map[string]string{
@@ -164,11 +199,15 @@ func newAddonsApplier(s *state.State) (*applier, error) {
 		},
 		Credentials:                         creds,
 		CredentialsCCM:                      credsCCM,
+		CredentialsCCMHash:                  credsCCMHash,
 		CCMClusterName:                      s.LiveCluster.CCMClusterName,
 		CSIMigration:                        csiMigration,
 		CSIMigrationFeatureGates:            csiMigrationFeatureGates,
+		CalicoIptablesBackend:               calicoIptablesBackend,
+		DeployCSIAddon:                      deployCSI,
 		MachineControllerCredentialsEnvVars: string(credsEnvVarsMC),
-		OperatingSystemManagerEnabled:       s.Cluster.OperatingSystemManagerEnabled(),
+		MachineControllerCredentialsHash:    mcCredsHash,
+		OperatingSystemManagerEnabled:       s.Cluster.OperatingSystemManager.Deploy,
 		RegistryCredentials:                 containerdRegistryCredentials(s.Cluster.ContainerRuntime.Containerd),
 		InternalImages: &internalImages{
 			pauseImage: s.PauseImage,
@@ -178,88 +217,20 @@ func newAddonsApplier(s *state.State) (*applier, error) {
 		Params:    params,
 	}
 
-	// Certs for CSI plugins
-	switch {
-	// Certs for vsphere-csi-webhook (deployed only if CSIMigration is enabled)
-	case s.Cluster.CloudProvider.Vsphere != nil:
-		vsphereCSISnapshotCertsMap, err := certificate.NewSignedTLSCert(
-			resources.VsphereCSISnapshotValidatingWebhookName,
-			resources.VsphereCSISnapshotValidatingWebhookNamespace,
-			s.Cluster.ClusterNetwork.ServiceDomainName,
-			kubeCAPrivateKey,
-			kubeCACert,
-		)
-		if err != nil {
-			return nil, err
-		}
-		data.Certificates["vSphereCSIWebhookCert"] = vsphereCSISnapshotCertsMap[resources.TLSCertName]
-		data.Certificates["vSphereCSIWebhookKey"] = vsphereCSISnapshotCertsMap[resources.TLSKeyName]
-
-		if csiMigration {
-			vsphereCSICertsMap, err := certificate.NewSignedTLSCert(
-				resources.VsphereCSIWebhookName,
-				resources.VsphereCSIWebhookNamespace,
-				s.Cluster.ClusterNetwork.ServiceDomainName,
-				kubeCAPrivateKey,
-				kubeCACert,
-			)
-			if err != nil {
-				return nil, err
-			}
-			data.Certificates["vSphereCSIWebhookCert"] = vsphereCSICertsMap[resources.TLSCertName]
-			data.Certificates["vSphereCSIWebhookKey"] = vsphereCSICertsMap[resources.TLSKeyName]
-		}
-	case s.Cluster.CloudProvider.Nutanix != nil:
-		nutanixCSICertsMap, err := certificate.NewSignedTLSCert(
-			resources.NutanixCSIWebhookName,
-			resources.NutanixCSIWebhookNamespace,
-			s.Cluster.ClusterNetwork.ServiceDomainName,
-			kubeCAPrivateKey,
-			kubeCACert,
-		)
-		if err != nil {
-			return nil, err
-		}
-		data.Certificates["NutanixCSIWebhookCert"] = nutanixCSICertsMap[resources.TLSCertName]
-		data.Certificates["NutanixCSIWebhookKey"] = nutanixCSICertsMap[resources.TLSKeyName]
-	case s.Cluster.CloudProvider.GCE != nil:
-		gceCSICertsMap, err := certificate.NewSignedTLSCert(
-			resources.GCEComputeCSIWebhookName,
-			resources.GCEComputeCSIWebhookNamespace,
-			s.Cluster.ClusterNetwork.ServiceDomainName,
-			kubeCAPrivateKey,
-			kubeCACert,
-		)
-		if err != nil {
-			return nil, err
-		}
-		data.Certificates["CSIWebhookCert"] = gceCSICertsMap[resources.TLSCertName]
-		data.Certificates["CSIWebhookKey"] = gceCSICertsMap[resources.TLSKeyName]
-	case s.Cluster.CloudProvider.DigitalOcean != nil && s.Cluster.CloudProvider.External:
-		digitaloceanCSICertsMap, err := certificate.NewSignedTLSCert(
-			resources.DigitalOceanCSIWebhookName,
-			resources.DigitalOceanCSIWebhookNamespace,
-			s.Cluster.ClusterNetwork.ServiceDomainName,
-			kubeCAPrivateKey,
-			kubeCACert,
-		)
-		if err != nil {
-			return nil, err
-		}
-		data.Certificates["DigitalOceanCSIWebhookCert"] = digitaloceanCSICertsMap[resources.TLSCertName]
-		data.Certificates["DigitalOceanCSIWebhookKey"] = digitaloceanCSICertsMap[resources.TLSKeyName]
+	if err := csiWebhookCerts(s, &data, csiMigration, kubeCAPrivateKey, kubeCACert); err != nil {
+		return nil, err
 	}
 
 	// Certs for operating-system-manager-webhook
-	if s.Cluster.OperatingSystemManagerEnabled() {
-		osmCertsMap, err := certificate.NewSignedTLSCert(
+	if s.Cluster.OperatingSystemManager.Deploy {
+		if err := webhookCerts(data.Certificates,
+			"OSM",
 			resources.OperatingSystemManagerWebhookName,
 			resources.OperatingSystemManagerNamespace,
 			s.Cluster.ClusterNetwork.ServiceDomainName,
 			kubeCAPrivateKey,
 			kubeCACert,
-		)
-		if err != nil {
+		); err != nil {
 			return nil, err
 		}
 
@@ -274,16 +245,94 @@ func newAddonsApplier(s *state.State) (*applier, error) {
 			return nil, fail.Runtime(err, "marshalling OSM credentials env variables")
 		}
 
-		data.Certificates["OperatingSystemManagerWebhookCert"] = osmCertsMap[resources.TLSCertName]
-		data.Certificates["OperatingSystemManagerWebhookKey"] = osmCertsMap[resources.TLSKeyName]
+		osmCredsHash, err := credentialsHash(s, credentials.TypeOSM)
+		if err != nil {
+			return nil, err
+		}
+
 		data.OperatingSystemManagerCredentialsEnvVars = string(credsEnvVarsOSM)
+		data.OperatingSystemManagerCredentialsHash = osmCredsHash
 	}
 
 	return &applier{
 		TemplateData: data,
 		LocalFS:      localFS,
-		EmbededFS:    embeddedaddons.FS,
+		EmbeddedFS:   embeddedaddons.FS,
 	}, nil
+}
+
+func csiWebhookCerts(s *state.State, data *templateData, csiMigration bool, kubeCAPrivateKey *rsa.PrivateKey, kubeCACert *x509.Certificate) error {
+	// Certs for CSI plugins
+	switch {
+	case s.Cluster.CloudProvider.DigitalOcean != nil,
+		s.Cluster.CloudProvider.Openstack != nil,
+		s.Cluster.CloudProvider.GCE != nil:
+		if err := webhookCerts(data.Certificates,
+			webhookCertsCSI,
+			resources.GenericCSIWebhookName,
+			resources.GenericCSIWebhookNamespace,
+			s.Cluster.ClusterNetwork.ServiceDomainName,
+			kubeCAPrivateKey,
+			kubeCACert,
+		); err != nil {
+			return err
+		}
+	// Certs for vsphere-csi-webhook (deployed only if CSIMigration is enabled)
+	case s.Cluster.CloudProvider.Vsphere != nil:
+		if err := webhookCerts(data.Certificates,
+			webhookCertsCSI,
+			resources.GenericCSIWebhookName,
+			resources.VsphereCSIWebhookNamespace,
+			s.Cluster.ClusterNetwork.ServiceDomainName,
+			kubeCAPrivateKey,
+			kubeCACert,
+		); err != nil {
+			return err
+		}
+		if csiMigration {
+			if err := webhookCerts(data.Certificates,
+				"CSIMigration",
+				resources.VsphereCSIWebhookName,
+				resources.VsphereCSIWebhookNamespace,
+				s.Cluster.ClusterNetwork.ServiceDomainName,
+				kubeCAPrivateKey,
+				kubeCACert,
+			); err != nil {
+				return err
+			}
+		}
+	case s.Cluster.CloudProvider.Nutanix != nil:
+		if err := webhookCerts(data.Certificates,
+			webhookCertsCSI,
+			resources.NutanixCSIWebhookName,
+			resources.GenericCSIWebhookNamespace,
+			s.Cluster.ClusterNetwork.ServiceDomainName,
+			kubeCAPrivateKey,
+			kubeCACert,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func webhookCerts(certs map[string]string, prefix, webhookName, webhookNamespace, serviceDomainName string, kubeCAPrivateKey *rsa.PrivateKey, kubeCACert *x509.Certificate) error {
+	certsMap, err := certificate.NewSignedTLSCert(
+		webhookName,
+		webhookNamespace,
+		serviceDomainName,
+		kubeCAPrivateKey,
+		kubeCACert,
+	)
+	if err != nil {
+		return err
+	}
+
+	certs[fmt.Sprintf("%sWebhookCert", prefix)] = certsMap[resources.TLSCertName]
+	certs[fmt.Sprintf("%sWebhookKey", prefix)] = certsMap[resources.TLSKeyName]
+
+	return nil
 }
 
 func containerdRegistryCredentials(containerdConfig *kubeoneapi.ContainerRuntimeContainerd) []registryCredentialsContainer {
@@ -332,6 +381,30 @@ func mcCredentialsEnvVars(s *state.State) ([]byte, error) {
 	}
 
 	return credsEnvVarsMC, nil
+}
+
+func credentialsHash(s *state.State, credsType credentials.Type) (string, error) {
+	creds, err := credentials.ProviderCredentials(s.Cluster.CloudProvider, s.CredentialsFilePath, credsType)
+	if err != nil {
+		return "", err
+	}
+
+	hash := fmt.Sprintf("kubeone-%s", s.Cluster.CloudProvider.CloudProviderName())
+
+	keys := make([]string, 0, len(creds))
+	for k := range creds {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		hash += fmt.Sprintf("%s%s", k, creds[k])
+	}
+
+	h := sha256.New()
+	h.Write([]byte(hash))
+
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func addonsLocalFS(clusterAddons *kubeoneapi.Addons, manifestFilePath string) (fs.FS, error) {

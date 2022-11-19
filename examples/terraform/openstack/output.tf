@@ -43,6 +43,8 @@ output "kubeone_hosts" {
       bastion              = openstack_networking_floatingip_v2.lb.address
       bastion_port         = var.bastion_port
       bastion_user         = var.bastion_user
+      ssh_hosts_keys       = var.ssh_hosts_keys
+      bastion_host_key     = var.bastion_host_key
     }
   }
 }
@@ -64,16 +66,29 @@ output "kubeone_workers" {
         operatingSystemSpec = {
           distUpgradeOnBoot = false
         }
+        # nodeAnnotations are applied on resulting Node objects
+        # nodeAnnotations = {
+        #   "key" = "value"
+        # }
+        # machineObjectAnnotations are applied on resulting Machine objects
+        # uncomment to following to set those kubelet parameters. More into at:
+        # https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
+        # machineObjectAnnotations = {
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/SystemReserved" = "cpu=200m,memory=200Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/KubeReserved"   = "cpu=200m,memory=300Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/EvictionHard"   = ""
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/MaxPods"        = "110"
+        # }
         cloudProviderSpec = {
           # provider specific fields:
           # see example under `cloudProviderSpec` section at:
-          # https://github.com/kubermatic/machine-controller/blob/master/examples/openstack-machinedeployment.yaml
+          # https://github.com/kubermatic/machine-controller/blob/main/examples/openstack-machinedeployment.yaml
           image          = data.openstack_images_image_v2.image.name
           flavor         = var.worker_flavor
           securityGroups = [openstack_networking_secgroup_v2.securitygroup.name]
           network        = openstack_networking_network_v2.network.name
           subnet         = openstack_networking_subnet_v2.subnet.name
-          floatingIpPool = var.external_network_name
+          # floatingIpPool = var.external_network_name
           # Optional: If set, the rootDisk will be a volume.
           # Otherwise, the rootDisk will be on ephemeral storage and its size will
           # be derived from the flavor

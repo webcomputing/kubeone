@@ -71,10 +71,22 @@ variable "ssh_agent_socket" {
   type        = string
 }
 
+variable "ssh_hosts_keys" {
+  default     = null
+  description = "A list of SSH hosts public keys to verify"
+  type        = list(string)
+}
+
+variable "bastion_host_key" {
+  description = "Bastion SSH host public key"
+  default     = null
+  type        = string
+}
+
 variable "disable_kubeapi_loadbalancer" {
   type        = bool
   default     = false
-  description = "E2E tests specific varible to disable usage of any loadbalancer in front of kubeapi-server"
+  description = "E2E tests specific variable to disable usage of any loadbalancer in front of kubeapi-server"
 }
 
 # Provider specific settings
@@ -96,7 +108,7 @@ variable "worker_type" {
 
 variable "initial_machinedeployment_replicas" {
   description = "Number of replicas per MachineDeployment"
-  default     = 1
+  default     = 2
   type        = number
 }
 
@@ -111,7 +123,7 @@ variable "datacenter" {
 }
 
 variable "image" {
-  default = "ubuntu-20.04"
+  default = "ubuntu-22.04"
   type    = string
 }
 
@@ -131,7 +143,7 @@ variable "initial_machinedeployment_operating_system_profile" {
   default     = ""
   type        = string
   description = <<EOF
-Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.
+Name of operating system profile for MachineDeployments, only applicable if operating-system-manager addon is enabled.
 If not specified, the default value will be added by machine-controller addon.
 EOF
 }

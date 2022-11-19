@@ -1,4 +1,4 @@
-# Source: https://github.com/kubernetes-csi/external-snapshotter/blob/v5.0.1/deploy/kubernetes/snapshot-controller/rbac-snapshot-controller.yaml
+# Source: https://github.com/kubernetes-csi/external-snapshotter/blob/v6.0.1/deploy/kubernetes/snapshot-controller/rbac-snapshot-controller.yaml
 ---
 # RBAC file for the snapshot controller.
 #
@@ -11,7 +11,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: snapshot-controller
-  namespace: kube-system
+  namespace: vmware-system-csi
 
 ---
 kind: ClusterRole
@@ -25,9 +25,6 @@ rules:
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "watch", "update"]
-  - apiGroups: ["storage.k8s.io"]
-    resources: ["storageclasses"]
-    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["list", "watch", "create", "update", "patch"]
@@ -58,7 +55,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: snapshot-controller
-    namespace: kube-system
+    namespace: vmware-system-csi
 roleRef:
   kind: ClusterRole
   name: snapshot-controller-runner
@@ -69,7 +66,7 @@ kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: snapshot-controller-leaderelection
-  namespace: kube-system
+  namespace: vmware-system-csi
 rules:
 - apiGroups: ["coordination.k8s.io"]
   resources: ["leases"]
@@ -80,7 +77,7 @@ kind: RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: snapshot-controller-leaderelection
-  namespace: kube-system
+  namespace: vmware-system-csi
 subjects:
   - kind: ServiceAccount
     name: snapshot-controller

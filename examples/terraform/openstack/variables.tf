@@ -83,6 +83,18 @@ variable "bastion_user" {
   type        = string
 }
 
+variable "ssh_hosts_keys" {
+  default     = null
+  description = "A list of SSH hosts public keys to verify"
+  type        = list(string)
+}
+
+variable "bastion_host_key" {
+  description = "Bastion SSH host public key"
+  default     = null
+  type        = string
+}
+
 # Provider specific settings
 
 variable "control_plane_flavor" {
@@ -112,9 +124,9 @@ variable "image" {
 variable "image_properties_query" {
   default = {
     os_distro  = "ubuntu"
-    os_version = "20.04"
+    os_version = "22.04"
   }
-  description = "in absense of var.image, this will be used to query API for the image"
+  description = "in absence of var.image, this will be used to query API for the image"
   type        = map(any)
 }
 
@@ -136,7 +148,7 @@ variable "subnet_dns_servers" {
 
 variable "initial_machinedeployment_replicas" {
   description = "Number of replicas per MachineDeployment"
-  default     = 1
+  default     = 2
   type        = number
 }
 
@@ -144,7 +156,7 @@ variable "initial_machinedeployment_operating_system_profile" {
   default     = ""
   type        = string
   description = <<EOF
-Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.
+Name of operating system profile for MachineDeployments, only applicable if operating-system-manager addon is enabled.
 If not specified, the default value will be added by machine-controller addon.
 EOF
 }

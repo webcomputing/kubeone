@@ -14,39 +14,61 @@
 
 # building image
 
-FROM golang:1.18.3 as builder
+FROM golang:1.19.3 as builder
 
 RUN apt-get update && apt-get install -y \
     unzip
 
 WORKDIR /download
 
-ENV TERRAFORM_VERSION "1.2.3"
+ENV TERRAFORM_VERSION "1.3.2"
 RUN curl -fL https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip | funzip >/usr/local/bin/terraform
 RUN chmod +x /usr/local/bin/terraform
 
-ENV SONOBUOY_VERSION "0.56.7"
+ENV SONOBUOY_VERSION "0.56.10"
 RUN curl -fL https://github.com/vmware-tanzu/sonobuoy/releases/download/v${SONOBUOY_VERSION}/sonobuoy_${SONOBUOY_VERSION}_linux_amd64.tar.gz | tar vxz
 RUN chmod +x sonobuoy
 
-COPY install-kube-tests-binaries.sh /opt/install-kube-tests-binaries.sh
-RUN /opt/install-kube-tests-binaries.sh
+ENV KUBECTL_VERSION="v1.24.7"
+RUN curl --fail -Lo kubectl https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl
+RUN chmod +x kubectl
 
 # resulting image
 
-
-FROM golang:1.18.3
+FROM golang:1.19.3
 
 ARG version
 
 LABEL "io.kubeone"="Kubermatic GmbH"
 LABEL version=${version}
 LABEL description="Set of kubernetes binaries to conduct kubeone E2E tests"
-LABEL maintainer="https://github.com/kubermatic/kubeone/blob/master/OWNERS"
+LABEL maintainer="https://github.com/kubermatic/kubeone/blob/main/OWNERS"
 
-ENV KUBETESTS_ROOT "/opt/kube-test"
 ENV USER root
+
+# install base tools
+RUN apt-get update && \
+    apt-get install -y \
+      apt-transport-https \
+      bash \
+      bash-completion \
+      ca-certificates \
+      curl \
+      git \
+      htop \
+      make \
+      nano \
+      openssh-client \
+      rsync \
+      software-properties-common \
+      unzip \
+      vim \
+      zip
+
+# make bash much more pleasant to use
+COPY bashrc /root/.bashrc
+COPY htoprc /root/.config/htop/htoprc
 
 COPY --from=builder /usr/local/bin/terraform /usr/local/bin/terraform
 COPY --from=builder /download/sonobuoy /usr/local/bin/sonobuoy
-COPY --from=builder ${KUBETESTS_ROOT} ${KUBETESTS_ROOT}
+COPY --from=builder /download/kubectl /usr/local/bin/kubectl

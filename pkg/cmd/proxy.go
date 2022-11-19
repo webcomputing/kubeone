@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/MakeNowJust/heredoc/v2"
 	"github.com/pkg/errors"
@@ -46,7 +47,7 @@ func proxyCmd(rootFlags *pflag.FlagSet) *cobra.Command {
 			HTTPS Proxy (CONNECT method) SSH tunnel.
 
 			This command helps to reach kubeapi endpoint with local kubectl in case when private/firewalled endpoint is used (e.g.
-			internal loadbalancer). It creates SSH tunnel to one of the control-plane nodes and then proxies incomming requests
+			internal loadbalancer). It creates SSH tunnel to one of the control-plane nodes and then proxies incoming requests
 			through it.
 		`),
 		Example: `kubeone proxy -m mycluster.yaml -t terraformoutput.json`,
@@ -97,6 +98,7 @@ func setupProxyTunnel(opts *proxyOpts) error {
 				http.Error(w, err.Error(), code)
 			}
 		}),
+		ReadHeaderTimeout: 1 * time.Minute,
 	}
 
 	fmt.Println("SSH tunnel started, please open another terminal and setup environment")

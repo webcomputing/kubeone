@@ -36,13 +36,16 @@ output "kubeone_hosts" {
       ssh_agent_socket     = var.ssh_agent_socket
       ssh_port             = var.ssh_port
       ssh_private_key_file = var.ssh_private_key_file
-      ssh_user             = var.ssh_username
+      ssh_user             = local.ssh_username
+      ssh_hosts_keys       = var.ssh_hosts_keys
+      bastion_host_key     = var.bastion_host_key
     }
   }
 }
 
 output "kubeone_workers" {
   description = "Workers definitions, that will be transformed into MachineDeployment object"
+  sensitive   = true
 
   value = {
     # following outputs will be parsed by kubeone and automatically merged into
@@ -54,14 +57,30 @@ output "kubeone_workers" {
           "k8c.io/operating-system-profile" = var.initial_machinedeployment_operating_system_profile
         }
         sshPublicKeys   = [file(var.ssh_public_key_file)]
-        operatingSystem = var.worker_os
+        operatingSystem = local.worker_os
         operatingSystemSpec = {
-          distUpgradeOnBoot = false
+          distUpgradeOnBoot               = false
+          rhelSubscriptionManagerUser     = var.rhsm_username
+          rhelSubscriptionManagerPassword = var.rhsm_password
+          rhsmOfflineToken                = var.rhsm_offline_token
         }
+        # nodeAnnotations are applied on resulting Node objects
+        # nodeAnnotations = {
+        #   "key" = "value"
+        # }
+        # machineObjectAnnotations are applied on resulting Machine objects
+        # uncomment to following to set those kubelet parameters. More into at:
+        # https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
+        # machineObjectAnnotations = {
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/SystemReserved" = "cpu=200m,memory=200Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/KubeReserved"   = "cpu=200m,memory=300Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/EvictionHard"   = ""
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/MaxPods"        = "110"
+        # }
         cloudProviderSpec = {
           # provider specific fields:
           # see example under `cloudProviderSpec` section at:
-          # https://github.com/kubermatic/machine-controller/blob/master/examples/azure-machinedeployment.yaml
+          # https://github.com/kubermatic/machine-controller/blob/main/examples/azure-machinedeployment.yaml
           location      = var.location
           resourceGroup = azurerm_resource_group.rg.name
           # vnetResourceGroup     = ""
@@ -74,6 +93,8 @@ output "kubeone_workers" {
           # assignAvailabilitySet = true/false
           securityGroupName = azurerm_network_security_group.sg.name
           assignPublicIP    = true
+          imageReference    = var.os != "rhel" ? var.image_references[var.os].image : null
+          imagePlan         = length(var.image_references[var.os].plan) > 0 && var.os != "rhel" ? var.image_references[var.os].plan[0] : null
           # Zones (optional)
           # Represents Availability Zones is a high-availability offering
           # that protects your applications and data from datacenter failures.

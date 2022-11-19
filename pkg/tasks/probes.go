@@ -17,6 +17,7 @@ limitations under the License.
 package tasks
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -32,6 +33,10 @@ import (
 	"k8c.io/kubeone/pkg/fail"
 	"k8c.io/kubeone/pkg/kubeconfig"
 	"k8c.io/kubeone/pkg/state"
+
+	clusterv1alpha1 "github.com/kubermatic/machine-controller/pkg/apis/cluster/v1alpha1"
+	"github.com/kubermatic/machine-controller/pkg/jsonutil"
+	providerconfigtypes "github.com/kubermatic/machine-controller/pkg/providerconfig/types"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -50,6 +55,15 @@ const (
 
 	k8sAppLabel               = "k8s-app"
 	openstackCCMAppLabelValue = "openstack-cloud-controller-manager"
+
+	nodeRoleMaster       = "node-role.kubernetes.io/master"
+	nodeRoleControlPlane = "node-role.kubernetes.io/control-plane"
+
+	provisioningUtilityKey       = "provisioningUtility"
+	provisioningUtilityCloudInit = "cloud-init"
+
+	machineDeploymentOSMAnnotation = ""
+	ospFlatcar                     = "osp-flatcar"
 )
 
 var KubeProxyObjectKey = dynclient.ObjectKey{
@@ -132,6 +146,144 @@ func safeguard(s *state.State) error {
 				}
 			}
 		}
+	}
+
+	if err := safeguardNodeSelectorsAndTolerations(s); err != nil {
+		return err
+	}
+
+	if err := safeguardFlatcarMachineDeployments(s); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// safeguardNodeSelectorsAndTolerations ensures that there are no pods that have:
+//   - node-role.kubernetes.io/master nodeSelector
+//   - node-role.kubernetes.io/master toleration without node-role.kubernetes.io/control-plane
+//     toleration
+//
+// That's because node-role.kubernetes.io/master label/node role has been completely
+// removed in Kubernetes 1.24. This safeguard is executed only when upgrading
+// from 1.23 to 1.24.
+// This safeguard can be removed when removing support for Kubernetes 1.23.
+func safeguardNodeSelectorsAndTolerations(s *state.State) error {
+	targetVersion, err := semver.NewVersion(s.Cluster.Versions.Kubernetes)
+	if err != nil {
+		return err
+	}
+
+	liveCP := s.LiveCluster.ControlPlane
+	if len(liveCP) == 0 || liveCP[0].Kubelet.Version == nil {
+		return nil
+	}
+
+	// Run safeguard only when upgrading to Kubernetes 1.24.
+	if targetVersion.Minor() == 24 && liveCP[0].Kubelet.Version.Minor() == 23 {
+		var pods corev1.PodList
+		// List pods in all namespaces
+		if err := s.DynamicClient.List(s.Context, &pods, dynclient.InNamespace("")); err != nil {
+			return fail.KubeClient(err, "getting all pods")
+		}
+
+		invalidNodeSelector := []string{}
+		invalidTolerations := []string{}
+
+		for _, pod := range pods.Items {
+			if _, ok := pod.Spec.NodeSelector[nodeRoleMaster]; ok {
+				invalidNodeSelector = append(invalidNodeSelector, pod.Name)
+			}
+			var foundMaster, foundControlPlane bool
+			for _, t := range pod.Spec.Tolerations {
+				if t.Key == nodeRoleMaster {
+					foundMaster = true
+				} else if t.Key == nodeRoleControlPlane {
+					foundControlPlane = true
+				}
+			}
+			// Consider tolerations as invalid only if there's toleration for master role
+			// but no toleration for control-plane role.
+			// If there are both, master toleration would be just ignored, so we don't need
+			// to fail.
+			if foundMaster && !foundControlPlane {
+				invalidTolerations = append(invalidTolerations, pod.Name)
+			}
+		}
+
+		var shouldFail bool
+		if len(invalidNodeSelector) > 0 {
+			shouldFail = true
+			s.Logger.Errorf("Found %d pod(s) that are using NodeSelector %q which is removed in Kubernetes 1.24: %s", len(invalidNodeSelector), nodeRoleMaster, invalidNodeSelector)
+		}
+		if len(invalidTolerations) > 0 {
+			shouldFail = true
+			s.Logger.Errorf("Found %d pod(s) that have toleration removed in Kubernetes 1.24 %q, but not %q toleration: %s", len(invalidTolerations), nodeRoleMaster, nodeRoleControlPlane, invalidTolerations)
+		}
+		if shouldFail {
+			s.Logger.Warn("For pods managed by KubeOne, run 'kubeone apply' with your current/actual Kubernetes version before upgrading to Kubernetes 1.24.")
+
+			return fail.RuntimeError{
+				Err: errors.New("invalid tolerations or nodeSelectors"),
+				Op:  "some pods are using tolerations or nodeSelectors removed in Kubernetes 1.24",
+			}
+		}
+	}
+
+	return nil
+}
+
+// safeguardFlatcarMachineDeployments ensures that there are no MachineDeployments
+// running Flatcar Linux and using cloud-init provisioning utility. That's because
+// cloud-init is currently not supported by OSM for Flatcar.
+// This safeguard only warns user about the problem, it doesn't block kubeone apply
+// from reconciling the cluster.
+func safeguardFlatcarMachineDeployments(s *state.State) error {
+	if !s.Cluster.OperatingSystemManager.Deploy || !s.Cluster.MachineController.Deploy {
+		return nil
+	}
+
+	var machinedeployments clusterv1alpha1.MachineDeploymentList
+	if err := s.DynamicClient.List(s.Context, &machinedeployments, dynclient.InNamespace(metav1.NamespaceSystem)); err != nil {
+		return fail.KubeClient(err, "getting machinedeployments")
+	}
+
+	cloudInitMDs := []string{}
+
+	for _, md := range machinedeployments.Items {
+		providerConfig := providerconfigtypes.Config{}
+		if err := jsonutil.StrictUnmarshal(md.Spec.Template.Spec.ProviderSpec.Value.Raw, &providerConfig); err != nil {
+			return fail.RuntimeError{
+				Err: err,
+				Op:  "decoding providerconfig for machinedeployment",
+			}
+		}
+
+		// KubeOne 1.4 has been using cloud-init for Flatcar, but it doesn't work
+		// with OSM, so users have to switch to Ignition.
+		if providerConfig.OperatingSystem == providerconfigtypes.OperatingSystemFlatcar {
+			var osConfig map[string]interface{}
+			if err := json.Unmarshal(providerConfig.OperatingSystemSpec.Raw, &osConfig); err != nil {
+				return fail.RuntimeError{
+					Err: err,
+					Op:  "decoding operatingsystemconfig for machinedeployment",
+				}
+			}
+
+			if v, ok := osConfig[provisioningUtilityKey]; ok && v == provisioningUtilityCloudInit {
+				if aVal := md.Annotations[machineDeploymentOSMAnnotation]; aVal == "" || aVal == ospFlatcar {
+					cloudInitMDs = append(cloudInitMDs, md.Name)
+				}
+			}
+		}
+	}
+
+	if len(cloudInitMDs) > 0 {
+		s.Logger.Warnf("Found %d Flatcar-based MachineDeployment(s) that use cloud-init provisioning utility: %s", len(cloudInitMDs), cloudInitMDs)
+		s.Logger.Warnf("cloud-init provisioning utility is not supported on Flatcar with Operating System Manager (OSM) enabled.")
+		s.Logger.Warnf("Please migrate your MachineDeployments to \"ignition\" provisioning utility after kubeone apply is done.")
+		s.Logger.Warnf("Not doing so will cause your Machines to never join the cluster.")
+		s.Logger.Warnf("For more details, check out the following document: https://docs.kubermatic.com/kubeone/main/architecture/operating-system-manager/usage/")
 	}
 
 	return nil
@@ -529,7 +681,7 @@ func systemdUnitExecStartPath(conn executor.Interface, unitName string) (string,
 func systemdStatus(conn executor.Interface, service string) (uint64, error) {
 	out, _, _, err := conn.Exec(fmt.Sprintf(systemdShowStatusCMD, service))
 	if err != nil {
-		return 0, fail.Runtime(err, "ckecking %q systemd service status", service)
+		return 0, fail.Runtime(err, "checking %q systemd service status", service)
 	}
 
 	out = strings.ReplaceAll(out, "=", ": ")
@@ -617,23 +769,32 @@ func detectCCMMigrationStatus(s *state.State) (*state.CCMStatus, error) {
 	csiFlagRegex := regexp.MustCompile(`CSIMigration[a-zA-Z]+=true`)
 	status := &state.CCMStatus{}
 	for _, pod := range pods.Items {
-		for _, c := range pod.Spec.Containers[0].Command {
+		for _, command := range pod.Spec.Containers[0].Command {
 			switch {
-			case strings.HasPrefix(c, "--cloud-provider") && !strings.Contains(c, "external"):
+			case strings.HasPrefix(command, "--cloud-provider") && !strings.Contains(command, "external"):
 				status.InTreeCloudProviderEnabled = true
-			case strings.HasPrefix(c, "--feature-gates"):
-				if csiFlagRegex.MatchString(c) {
+			case strings.HasPrefix(command, "--feature-gates"):
+				if csiFlagRegex.MatchString(command) {
 					status.CSIMigrationEnabled = true
 				}
-				unregister := s.Cluster.InTreePluginUnregisterFeatureGate()
+
+				csiFeatureGates, _, _ := s.Cluster.CSIMigrationFeatureGates(true)
+				unregistered := []string{}
+
+				for fg := range csiFeatureGates {
+					if strings.Contains(fg, "Unregister") {
+						unregistered = append(unregistered, fg)
+					}
+				}
 
 				foundUnregister := 0
-				for _, u := range unregister {
-					if strings.Contains(c, fmt.Sprintf("%s=true", u)) {
+				for _, fg := range unregistered {
+					if strings.Contains(command, fmt.Sprintf("%s=true", fg)) {
 						foundUnregister++
 					}
 				}
-				if len(unregister) > 0 && foundUnregister == len(unregister) {
+
+				if len(unregistered) > 0 && foundUnregister == len(unregistered) {
 					status.InTreeCloudProviderUnregistered = true
 				}
 			}
@@ -689,17 +850,17 @@ func detectCCMMigrationStatus(s *state.State) (*state.CCMStatus, error) {
 // backwards compatibility.
 //
 // The function works in the following way:
-//   * if the cluster is not provisioned, or if the cluster is not an OpenStack
+//   - if the cluster is not provisioned, or if the cluster is not an OpenStack
 //     cluster, return the KubeOne cluster name
-//   * if it's an existing OpenStack cluster:
-//      * if cluster is running in-tree cloud provider: return the KubeOne
-//        cluster name because the in-tree provider already has the
-//        --cluster-name flag set
-//      * if cluster is running external cloud provider: check if there is
-//        `--cluster-name` flag on the OpenStack CCM. If there is, read the
-//        value and return it, otherwise don't set the OpenStack cluster name,
-//        in which case it defaults to `kubernetes`
-//   * if cluster is migrated to external CCM, return the KubeOne cluster name
+//   - if it's an existing OpenStack cluster:
+//   - if cluster is running in-tree cloud provider: return the KubeOne
+//     cluster name because the in-tree provider already has the
+//     --cluster-name flag set
+//   - if cluster is running external cloud provider: check if there is
+//     `--cluster-name` flag on the OpenStack CCM. If there is, read the
+//     value and return it, otherwise don't set the OpenStack cluster name,
+//     in which case it defaults to `kubernetes`
+//   - if cluster is migrated to external CCM, return the KubeOne cluster name
 //
 // If an operator wants to change the --cluster-name flag on OpenStack external
 // CCM, they need to edit the CCM DaemonSet manually. KubeOne will

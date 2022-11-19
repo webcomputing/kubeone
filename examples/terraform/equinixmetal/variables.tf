@@ -37,6 +37,7 @@ variable "worker_os" {
   # * ubuntu
   # * centos
   # * rockylinux
+  # * flatcar
   default = "ubuntu"
   type    = string
 }
@@ -72,34 +73,46 @@ variable "ssh_agent_socket" {
   type        = string
 }
 
+variable "ssh_hosts_keys" {
+  default     = null
+  description = "A list of SSH hosts public keys to verify"
+  type        = list(string)
+}
+
+variable "bastion_host_key" {
+  description = "Bastion SSH host public key"
+  default     = null
+  type        = string
+}
+
 # Provider specific settings
 
-variable "facility" {
-  default     = "ams1"
-  description = "Facility (datacenter)"
+variable "metro" {
+  default     = "AM"
+  description = "Metro area for cluster"
   type        = string
 }
 
 variable "control_plane_operating_system" {
-  default     = "ubuntu_18_04"
+  default     = "ubuntu_22_04"
   description = "Image to use for control plane provisioning"
   type        = string
 }
 
 variable "lb_operating_system" {
-  default     = "ubuntu_18_04"
+  default     = "ubuntu_22_04"
   description = "Image to use for loadbalancer provisioning"
   type        = string
 }
 
 variable "device_type" {
-  default     = "c3.small.x86"
+  default     = "m3.small.x86"
   description = "type (size) of the device"
   type        = string
 }
 
 variable "lb_device_type" {
-  default     = "c3.small.x86"
+  default     = "m3.small.x86"
   description = "type (size) of the load balancer device"
   type        = string
 }
@@ -111,7 +124,7 @@ variable "project_id" {
 
 variable "initial_machinedeployment_replicas" {
   description = "Number of replicas per MachineDeployment"
-  default     = 1
+  default     = 2
   type        = number
 }
 
@@ -119,7 +132,7 @@ variable "initial_machinedeployment_operating_system_profile" {
   default     = ""
   type        = string
   description = <<EOF
-Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.
+Name of operating system profile for MachineDeployments, only applicable if operating-system-manager addon is enabled.
 If not specified, the default value will be added by machine-controller addon.
 EOF
 }

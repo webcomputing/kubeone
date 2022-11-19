@@ -40,6 +40,8 @@ output "kubeone_hosts" {
       bastion              = var.bastion_host
       bastion_port         = var.bastion_port
       bastion_user         = var.bastion_username
+      ssh_hosts_keys       = var.ssh_hosts_keys
+      bastion_host_key     = var.bastion_host_key
     }
   }
 }
@@ -61,13 +63,26 @@ output "kubeone_workers" {
         operatingSystemSpec = {
           distUpgradeOnBoot = false
         }
+        # nodeAnnotations are applied on resulting Node objects
+        # nodeAnnotations = {
+        #   "key" = "value"
+        # }
+        # machineObjectAnnotations are applied on resulting Machine objects
+        # uncomment to following to set those kubelet parameters. More into at:
+        # https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
+        # machineObjectAnnotations = {
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/SystemReserved" = "cpu=200m,memory=200Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/KubeReserved"   = "cpu=200m,memory=300Mi"
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/EvictionHard"   = ""
+        #   "v1.kubelet-config.machine-controller.kubermatic.io/MaxPods"        = "110"
+        # }
         cloudProviderSpec = {
           # provider specific fields:
           # see example under `cloudProviderSpec` section at:
-          # https://github.com/kubermatic/machine-controller/blob/master/examples/vsphere-machinedeployment.yaml
-          allowInsecure = false
+          # https://github.com/kubermatic/machine-controller/blob/main/examples/vsphere-machinedeployment.yaml
+          allowInsecure = var.allow_insecure
           cluster       = var.compute_cluster_name
-          cpus          = 2
+          cpus          = var.worker_num_cpus
           datacenter    = var.dc_name
           # Either Datastore or DatastoreCluster have to be provided.
           datastore        = var.datastore_name

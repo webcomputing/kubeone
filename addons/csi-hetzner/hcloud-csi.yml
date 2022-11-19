@@ -9,17 +9,6 @@ spec:
   volumeLifecycleModes:
     - Persistent
 ---
-kind: StorageClass
-apiVersion: storage.k8s.io/v1
-metadata:
-  namespace: kube-system
-  name: hcloud-volumes
-  annotations:
-    storageclass.kubernetes.io/is-default-class: "true"
-provisioner: csi.hetzner.cloud
-volumeBindingMode: WaitForFirstConsumer
-allowVolumeExpansion: true
----
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -109,6 +98,8 @@ spec:
     metadata:
       labels:
         app: hcloud-csi-controller
+      annotations:
+        "kubeone.k8c.io/credentials-hash": "{{ .CredentialsCCMHash }}"
     spec:
       serviceAccount: hcloud-csi
       tolerations:
@@ -219,6 +210,8 @@ spec:
     metadata:
       labels:
         app: hcloud-csi
+      annotations:
+        "kubeone.k8c.io/credentials-hash": "{{ .CredentialsCCMHash }}"
     spec:
       tolerations:
         - effect: NoExecute

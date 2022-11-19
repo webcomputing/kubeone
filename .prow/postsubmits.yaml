@@ -7,19 +7,19 @@ postsubmits:
       slack:
         channel: dev-kubeone
     branches:
-      - ^master$
+      - ^main$
     labels:
-      preset-docker-push: "true"
+      preset-docker-push-kubermatic: "true"
     spec:
       containers:
-        - image: quay.io/kubermatic/build:go-1.18-node-16-kind-0.12-1
+        - image: quay.io/kubermatic/build:go-1.19-node-18-kind-0.17-4
           command:
             - /bin/bash
             - -c
             - |
               set -euo pipefail
               start-docker.sh
-              docker login -u $DOCKERHUB_USERNAME -p $DOCKERHUB_PASSWORD
+              docker login -u "$QUAY_IO_USERNAME" -p "$QUAY_IO_PASSWORD" quay.io
               cd ./hack/images/kubeone-e2e
               ./release.sh
           # docker-in-docker needs privileged mode
@@ -36,7 +36,7 @@ postsubmits:
       slack:
         channel: dev-kubeone
     branches:
-      - ^master$
+      - ^main$
       - ^v\d+\.\d+\.\d+.*
     labels:
       preset-goproxy: "true"
@@ -44,7 +44,7 @@ postsubmits:
       preset-docker-mirror: "true"
     spec:
       containers:
-        - image: quay.io/kubermatic/build:go-1.18-node-16-kind-0.12-1
+        - image: quay.io/kubermatic/build:go-1.19-node-18-kind-0.17-4
           command:
             - /bin/bash
             - -c
@@ -63,12 +63,12 @@ postsubmits:
     decorate: true
     clone_uri: "ssh://git@github.com/kubermatic/kubeone.git"
     branches:
-      - ^master$
+      - ^main$
     spec:
       containers:
         # This must match the go version used for building, else go will rightfully
         # not use the cache
-        - image: kubermatic/kubeone-e2e:v0.1.23
+        - image: quay.io/kubermatic/kubeone-e2e:v0.1.27
           command:
             - ./hack/ci/upload-gocache.sh
           resources:
@@ -82,12 +82,12 @@ postsubmits:
     decorate: true
     clone_uri: "ssh://git@github.com/kubermatic/kubeone.git"
     branches:
-      - ^master$
+      - ^main$
     spec:
       containers:
         # This must match the go version used for building, else go will rightfully
         # not use the cache
-        - image: kubermatic/kubeone-e2e:v0.1.23
+        - image: quay.io/kubermatic/kubeone-e2e:v0.1.27
           command:
             - ./hack/ci/upload-gocache.sh
           env:

@@ -85,7 +85,25 @@ variable "bastion_username" {
   type        = string
 }
 
+variable "ssh_hosts_keys" {
+  default     = null
+  description = "A list of SSH hosts public keys to verify"
+  type        = list(string)
+}
+
+variable "bastion_host_key" {
+  description = "Bastion SSH host public key"
+  default     = null
+  type        = string
+}
+
 # provider specific settings
+
+variable "allow_insecure" {
+  description = "allow insecure https connection to vCenter"
+  default     = false
+  type        = bool
+}
 
 variable "dc_name" {
   default     = "dc-1"
@@ -153,11 +171,22 @@ variable "control_plane_memory" {
   type        = number
 }
 
+variable "control_plane_num_cpus" {
+  default     = 2
+  description = "number of cpus of each control plane node"
+  type        = number
+}
+
 variable "worker_memory" {
   default     = 2048
   description = "memory size of each worker node in MB"
   type        = number
+}
 
+variable "worker_num_cpus" {
+  default     = 2
+  description = "number of cpus of each workers node"
+  type        = number
 }
 
 variable "worker_disk" {
@@ -174,7 +203,7 @@ variable "api_vip" {
 
 variable "initial_machinedeployment_replicas" {
   description = "Number of replicas per MachineDeployment"
-  default     = 1
+  default     = 2
   type        = number
 }
 
@@ -182,13 +211,13 @@ variable "initial_machinedeployment_operating_system_profile" {
   default     = ""
   type        = string
   description = <<EOF
-Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.
+Name of operating system profile for MachineDeployments, only applicable if operating-system-manager addon is enabled.
 If not specified, the default value will be added by machine-controller addon.
 EOF
 }
 
 variable "is_vsphere_enterprise_plus_license" {
-  description = "toogle on/off based on your vsphere enterprise license"
+  description = "toggle on/off based on your vsphere enterprise license"
   type        = bool
   default     = true
 }

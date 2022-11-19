@@ -73,11 +73,13 @@ The built-in integration with Terraform, allows you to easily provision your
 infrastructure using Terraform and let KubeOne take all the needed information
 from the Terraform state.
 
-### Integration With Cluster-API and Kubermatic machine-controller
+### Integration With Cluster-API, Kubermatic machine-controller, and operating-system-manager
 
 Manage your worker nodes declaratively by utilizing the [Cluster-API][cluster-api]
 and [Kubermatic machine-controller][machine-controller]. Create, remove,
 upgrade, or scale your worker nodes using kubectl.
+[Kubermatic operating-system-manager][operating-system-manager] is responsibile for
+managing user-data for worker machines in the cluster.
 
 ## Getting Involved
 
@@ -86,11 +88,9 @@ a new feature or improvement, please check out our
 [contributing guide][contributing-guide].
 
 If you want to get in touch with us and discuss about improvements and new
-features, please create a new issue on GitHub or connect with us over the
-forums or Slack:
+features, please create a new issue on GitHub or connect with us over Slack:
 
 * [`#kubeone` channel][k8s-slack-kubeone] on [Kubernetes Slack][k8s-slack]
-* [Kubermatic forums][forums]
 
 ## Reporting Bugs
 
@@ -114,17 +114,16 @@ See [the list of releases][changelog] to find out about feature changes.
 [upstream-supported-versions]: https://kubernetes.io/docs/setup/release/version-skew-policy/#supported-versions
 [cluster-api]: https://github.com/kubernetes-sigs/cluster-api
 [machine-controller]: https://github.com/kubermatic/machine-controller
+[operating-system-manager]: https://github.com/kubermatic/operating-system-manager
 [docs]: https://docs.kubermatic.com/kubeone/
-[docs-architecture]: https://docs.kubermatic.com/kubeone/v1.4/architecture/
-[docs-concepts]: https://docs.kubermatic.com/kubeone/v1.4/architecture/concepts/
-[docs-compatibility]: https://docs.kubermatic.com/kubeone/v1.4/architecture/compatibility/
-[docs-getting-kubeone]: https://docs.kubermatic.com/kubeone/v1.4/getting_kubeone/
-[docs-provisioning]: https://docs.kubermatic.com/kubeone/v1.4/tutorials/creating_clusters/
-[contributing-guide]: https://github.com/kubermatic/KubeOne/blob/master/CONTRIBUTING.md
+[docs-architecture]: https://docs.kubermatic.com/kubeone/main/architecture/
+[docs-concepts]: https://docs.kubermatic.com/kubeone/main/architecture/concepts/
+[docs-compatibility]: https://docs.kubermatic.com/kubeone/main/architecture/compatibility/
+[docs-getting-kubeone]: https://docs.kubermatic.com/kubeone/main/getting-kubeone/
+[docs-provisioning]: https://docs.kubermatic.com/kubeone/main/tutorials/creating-clusters/
+[contributing-guide]: https://github.com/kubermatic/kubeone/blob/main/CONTRIBUTING.md
 [k8s-slack-kubeone]: https://kubernetes.slack.com/messages/CNEV2UMT7
 [k8s-slack]: http://slack.k8s.io/
-[forums]: https://forum.kubermatic.com/
-[github-issue]: https://github.com/kubermatic/KubeOne/issues
-[security-vulnerability]: https://github.com/kubermatic/kubeone/blob/master/CONTRIBUTING.md#reporting-a-security-vulnerability
-[changelog]: https://github.com/kubermatic/KubeOne/releases
-[survey]: https://docs.google.com/forms/d/e/1FAIpQLSfzKQPvG0gkLJ-87fg9TrM-UCsBi_cwAuTiaRsR8H0_okNLsw/viewform?hss_channel=tw-3614488228
+[github-issue]: https://github.com/kubermatic/kubeone/issues
+[security-vulnerability]: https://github.com/kubermatic/kubeone/blob/main/CONTRIBUTING.md#reporting-a-security-vulnerability
+[changelog]: https://github.com/kubermatic/kubeone/releases

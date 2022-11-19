@@ -74,6 +74,12 @@ variable "ssh_agent_socket" {
   type        = string
 }
 
+variable "ssh_hosts_keys" {
+  default     = null
+  description = "A list of SSH hosts public keys to verify"
+  type        = list(string)
+}
+
 variable "bastion_port" {
   description = "Bastion SSH port"
   default     = 22
@@ -83,6 +89,12 @@ variable "bastion_port" {
 variable "bastion_user" {
   description = "Bastion SSH username"
   default     = ""
+  type        = string
+}
+
+variable "bastion_host_key" {
+  description = "Bastion SSH host public key"
+  default     = null
   type        = string
 }
 
@@ -99,7 +111,7 @@ variable "control_plane_labels" {
 variable "disable_kubeapi_loadbalancer" {
   type        = bool
   default     = false
-  description = "E2E tests specific varible to disable usage of any loadbalancer in front of kubeapi-server"
+  description = "E2E tests specific variable to disable usage of any loadbalancer in front of kubeapi-server"
 }
 
 # Provider specific settings
@@ -134,6 +146,12 @@ variable "worker_type" {
   type        = string
 }
 
+variable "worker_volume_size" {
+  default     = 50
+  description = "Size of the EBS volume, in Gb"
+  type        = number
+}
+
 variable "bastion_type" {
   default     = "t3.nano"
   description = "instance type for bastion"
@@ -165,23 +183,20 @@ variable "ami_filters" {
   type = map(object({
     owners       = list(string)
     image_name   = list(string)
-    osp_name     = string
     ssh_username = string
     worker_os    = string
   }))
   default = {
     ubuntu = {
       owners       = ["099720109477"] # Canonical
-      image_name   = ["ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"]
-      osp_name     = "osp-ubuntu"
+      image_name   = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
       ssh_username = "ubuntu"
       worker_os    = "ubuntu"
     }
 
     centos = {
       owners       = ["125523088429"]
-      image_name   = ["CentOS 8.* x86_64"]
-      osp_name     = "osp-centos8"
+      image_name   = ["CentOS 7.* x86_64"]
       ssh_username = "centos"
       worker_os    = "centos"
     }
@@ -189,7 +204,6 @@ variable "ami_filters" {
     flatcar = {
       owners       = ["075585003325"] # Kinvolk
       image_name   = ["Flatcar-stable-*-hvm"]
-      osp_name     = "osp-flatcar"
       ssh_username = "core"
       worker_os    = "flatcar"
     }
@@ -197,7 +211,6 @@ variable "ami_filters" {
     rhel = {
       owners       = ["309956199498"] # Red Hat
       image_name   = ["RHEL-8*_HVM-*-x86_64-*"]
-      osp_name     = "osp-rhel"
       ssh_username = "ec2-user"
       worker_os    = "rhel"
     }
@@ -205,7 +218,6 @@ variable "ami_filters" {
     rockylinux = {
       owners       = ["792107900819"] # RockyLinux
       image_name   = ["Rocky-8-ec2-*.x86_64"]
-      osp_name     = "osp-rockylinux"
       ssh_username = "rocky"
       worker_os    = "rockylinux"
     }
@@ -213,7 +225,6 @@ variable "ami_filters" {
     amzn = {
       owners       = ["137112412989"] # Amazon
       image_name   = ["amzn2-ami-hvm-2.0.*-x86_64-gp2"]
-      osp_name     = "osp-amzn2"
       ssh_username = "ec2-user"
       worker_os    = "amzn2"
     }
@@ -264,11 +275,17 @@ variable "control_plane_vm_count" {
   type        = number
 }
 
+variable "provisioning_utility" {
+  description = "provisioning utility to be used for Flatcar worker nodes"
+  default     = ""
+  type        = string
+}
+
 variable "initial_machinedeployment_operating_system_profile" {
   default     = ""
   type        = string
   description = <<EOF
-Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.
+Name of operating system profile for MachineDeployments, only applicable if operating-system-manager addon is enabled.
 If not specified default is used based on the OS specified for workers.
 EOF
 }

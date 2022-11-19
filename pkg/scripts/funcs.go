@@ -47,6 +47,11 @@ var (
 		sudo modprobe overlay
 		sudo modprobe br_netfilter
 		sudo modprobe ip_tables
+		if modinfo nf_conntrack_ipv4 &> /dev/null; then
+			sudo modprobe nf_conntrack_ipv4
+		else
+			sudo modprobe nf_conntrack
+		fi
 		sudo mkdir -p /etc/sysctl.d
 		cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
 		fs.inotify.max_user_watches         = 1048576
@@ -80,8 +85,7 @@ var (
 )
 
 const (
-	defaultDockerVersion           = "'19.03.*'"
 	latestDockerVersion            = "'20.10.*'"
-	defaultContainerdVersion       = "'1.5.*'"
+	defaultContainerdVersion       = "'1.6.*'"
 	defaultAmazonContainerdVersion = "'1.4.*'"
 )

@@ -16,6 +16,7 @@ spec:
         "prometheus.io/scrape": "true"
         "prometheus.io/port": "8080"
         "prometheus.io/path": "/metrics"
+        "kubeone.k8c.io/credentials-hash": "{{ .OperatingSystemManagerCredentialsHash }}"
       labels:
         app: operating-system-manager
     spec:
@@ -44,10 +45,18 @@ spec:
             - -v=4
             - -health-probe-address=0.0.0.0:8085
             - -metrics-address=0.0.0.0:8080
+            {{ if .Config.Features.NodeLocalDNS.Deploy -}}
             - -cluster-dns={{ .Resources.NodeLocalDNSVirtualIP }}
+            {{ end -}}
             - -namespace=kube-system
             - -container-runtime={{ .Config.ContainerRuntime }}
             - -pause-image={{ .InternalImages.Get "PauseImage" }}
+            {{ if .Config.CloudProvider.External }}
+            - -external-cloud-provider
+            {{ end }}
+            {{ if .CSIMigrationFeatureGates }}
+            - -node-kubelet-feature-gates={{ .CSIMigrationFeatureGates }}
+            {{ end }}
             {{ range .Config.ContainerRuntime.MachineControllerFlags -}}
             - {{ . }}
             {{ end -}}

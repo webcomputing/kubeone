@@ -41,9 +41,11 @@ output "kubeone_hosts" {
       ssh_port             = var.ssh_port
       ssh_private_key_file = var.ssh_private_key_file
       ssh_user             = local.ssh_username
+      ssh_hosts_keys       = var.ssh_hosts_keys
       bastion              = aws_instance.bastion.public_ip
       bastion_port         = var.bastion_port
       bastion_user         = local.bastion_user
+      bastion_host_key     = var.bastion_host_key
       labels               = var.control_plane_labels
       # uncomment to following to set those kubelet parameters. More into at:
       # https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
@@ -86,13 +88,13 @@ output "kubeone_workers" {
       replicas = var.initial_machinedeployment_replicas
       providerSpec = {
         annotations = {
-          "k8c.io/operating-system-profile" = local.initial_machinedeployment_operating_system_profile
+          "k8c.io/operating-system-profile" = var.initial_machinedeployment_operating_system_profile
         }
         sshPublicKeys   = local.worker_deploy_ssh_key
         operatingSystem = local.worker_os
         operatingSystemSpec = {
           distUpgradeOnBoot   = false
-          provisioningUtility = "cloud-init"
+          provisioningUtility = var.provisioning_utility
         }
         labels = {
           isSpotInstance = format("%t", local.initial_machinedeployment_spotinstances)
@@ -113,7 +115,7 @@ output "kubeone_workers" {
         cloudProviderSpec = {
           # provider specific fields:
           # see example under `cloudProviderSpec` section at:
-          # https://github.com/kubermatic/machine-controller/blob/master/examples/aws-machinedeployment.yaml
+          # https://github.com/kubermatic/machine-controller/blob/main/examples/aws-machinedeployment.yaml
           region           = var.aws_region
           ami              = local.ami
           availabilityZone = local.zoneA
@@ -123,7 +125,7 @@ output "kubeone_workers" {
           subnetId         = local.subnets[local.zoneA]
           instanceType     = var.worker_type
           assignPublicIP   = true
-          diskSize         = 50
+          diskSize         = var.worker_volume_size
           diskType         = "gp2"
           ## Only applicable if diskType = io1
           diskIops       = 500
@@ -144,13 +146,13 @@ output "kubeone_workers" {
       replicas = var.initial_machinedeployment_replicas
       providerSpec = {
         annotations = {
-          "k8c.io/operating-system-profile" = local.initial_machinedeployment_operating_system_profile
+          "k8c.io/operating-system-profile" = var.initial_machinedeployment_operating_system_profile
         }
         sshPublicKeys   = local.worker_deploy_ssh_key
         operatingSystem = local.worker_os
         operatingSystemSpec = {
           distUpgradeOnBoot   = false
-          provisioningUtility = "cloud-init"
+          provisioningUtility = var.provisioning_utility
         }
         labels = {
           isSpotInstance = format("%t", local.initial_machinedeployment_spotinstances)
@@ -171,7 +173,7 @@ output "kubeone_workers" {
         cloudProviderSpec = {
           # provider specific fields:
           # see example under `cloudProviderSpec` section at:
-          # https://github.com/kubermatic/machine-controller/blob/master/examples/aws-machinedeployment.yaml
+          # https://github.com/kubermatic/machine-controller/blob/main/examples/aws-machinedeployment.yaml
           region           = var.aws_region
           ami              = local.ami
           availabilityZone = local.zoneB
@@ -181,7 +183,7 @@ output "kubeone_workers" {
           subnetId         = local.subnets[local.zoneB]
           instanceType     = var.worker_type
           assignPublicIP   = true
-          diskSize         = 50
+          diskSize         = var.worker_volume_size
           diskType         = "gp2"
           ## Only applicable if diskType = io1
           diskIops       = 500
@@ -202,13 +204,13 @@ output "kubeone_workers" {
       replicas = var.initial_machinedeployment_replicas
       providerSpec = {
         annotations = {
-          "k8c.io/operating-system-profile" = local.initial_machinedeployment_operating_system_profile
+          "k8c.io/operating-system-profile" = var.initial_machinedeployment_operating_system_profile
         }
         sshPublicKeys   = local.worker_deploy_ssh_key
         operatingSystem = local.worker_os
         operatingSystemSpec = {
           distUpgradeOnBoot   = false
-          provisioningUtility = "cloud-init"
+          provisioningUtility = var.provisioning_utility
         }
         labels = {
           isSpotInstance = format("%t", local.initial_machinedeployment_spotinstances)
@@ -229,7 +231,7 @@ output "kubeone_workers" {
         cloudProviderSpec = {
           # provider specific fields:
           # see example under `cloudProviderSpec` section at:
-          # https://github.com/kubermatic/machine-controller/blob/master/examples/aws-machinedeployment.yaml
+          # https://github.com/kubermatic/machine-controller/blob/main/examples/aws-machinedeployment.yaml
           region           = var.aws_region
           ami              = local.ami
           availabilityZone = local.zoneC
@@ -239,7 +241,7 @@ output "kubeone_workers" {
           subnetId         = local.subnets[local.zoneC]
           instanceType     = var.worker_type
           assignPublicIP   = true
-          diskSize         = 50
+          diskSize         = var.worker_volume_size
           diskType         = "gp2"
           ## Only applicable if diskType = io1
           diskIops       = 500

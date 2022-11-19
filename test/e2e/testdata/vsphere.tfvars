@@ -1,0 +1,9 @@
+allow_insecure       = true
+dc_name              = "Hamburg"
+datastore_name       = "alpha1"
+compute_cluster_name = "Kubermatic"
+network_name         = "Default Network"
+folder_name          = "kubeone-e2e"
+control_plane_memory = 4096
+worker_memory        = 4096
+disk_size            = 25

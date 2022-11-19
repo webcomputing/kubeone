@@ -1,6 +1,6 @@
 +++
 title = "v1beta2 API Reference"
-date = 2022-07-06T19:10:49+03:00
+date = 2022-11-08T18:46:06+01:00
 weight = 11
 +++
 ## v1beta2
@@ -23,6 +23,7 @@ weight = 11
 * [ContainerdRegistryAuthConfig](#containerdregistryauthconfig)
 * [ContainerdTLSConfig](#containerdtlsconfig)
 * [ControlPlaneConfig](#controlplaneconfig)
+* [CoreDNS](#coredns)
 * [DNSConfig](#dnsconfig)
 * [DigitalOceanSpec](#digitaloceanspec)
 * [DynamicAuditLog](#dynamicauditlog)
@@ -43,11 +44,13 @@ weight = 11
 * [LoggingConfig](#loggingconfig)
 * [MachineControllerConfig](#machinecontrollerconfig)
 * [MetricsServer](#metricsserver)
+* [NodeLocalDNS](#nodelocaldns)
 * [NoneSpec](#nonespec)
 * [NutanixSpec](#nutanixspec)
 * [OpenIDConnect](#openidconnect)
 * [OpenIDConnectConfig](#openidconnectconfig)
 * [OpenstackSpec](#openstackspec)
+* [OperatingSystemManagerConfig](#operatingsystemmanagerconfig)
 * [PodNodeSelector](#podnodeselector)
 * [PodNodeSelectorConfig](#podnodeselectorconfig)
 * [PodSecurityPolicy](#podsecuritypolicy)
@@ -173,6 +176,7 @@ Only one cloud provider must be defined at the single time.
 | external | External | bool | false |
 | cloudConfig | CloudConfig | string | false |
 | csiConfig | CSIConfig | string | false |
+| secretProviderClassName | SecretProviderClassName | string | false |
 | aws | AWS | *[AWSSpec](#awsspec) | false |
 | azure | Azure | *[AzureSpec](#azurespec) | false |
 | digitalocean | DigitalOcean | *[DigitalOceanSpec](#digitaloceanspec) | false |
@@ -194,11 +198,16 @@ ClusterNetworkConfig describes the cluster network
 | Field | Description | Scheme | Required |
 | ----- | ----------- | ------ | -------- |
 | podSubnet | PodSubnet default value is \"10.244.0.0/16\" | string | false |
+| podSubnetIPv6 | PodSubnetIPv6 default value is \"\"fd01::/48\"\" | string | false |
 | serviceSubnet | ServiceSubnet default value is \"10.96.0.0/12\" | string | false |
+| serviceSubnetIPv6 | ServiceSubnetIPv6 default value is \"fd02::/120\" | string | false |
 | serviceDomainName | ServiceDomainName default value is \"cluster.local\" | string | false |
 | nodePortRange | NodePortRange default value is \"30000-32767\" | string | false |
 | cni | CNI default value is {canal: {mtu: 1450}} | *[CNI](#cni) | false |
 | kubeProxy | KubeProxy config | *[KubeProxyConfig](#kubeproxyconfig) | false |
+| ipFamily | IPFamily allows specifying IP family of a cluster. Valid values are IPv4 \| IPv6 \| IPv4+IPv6 \| IPv6+IPv4. | IPFamily | false |
+| nodeCIDRMaskSizeIPv4 | NodeCIDRMaskSizeIPv4 is the mask size used to address the nodes within provided IPv4 Pods CIDR. It has to be larger than the provided IPv4 Pods CIDR. Defaults to 24. | *int | false |
+| nodeCIDRMaskSizeIPv6 | NodeCIDRMaskSizeIPv6 is the mask size used to address the nodes within provided IPv6 Pods CIDR. It has to be larger than the provided IPv6 Pods CIDR. Defaults to 64. | *int | false |
 
 [Back to Group](#v1beta2)
 
@@ -275,6 +284,18 @@ ControlPlaneConfig defines control plane nodes
 | Field | Description | Scheme | Required |
 | ----- | ----------- | ------ | -------- |
 | hosts | Hosts array of all control plane hosts. | [][HostConfig](#hostconfig) | true |
+
+[Back to Group](#v1beta2)
+
+### CoreDNS
+
+
+
+| Field | Description | Scheme | Required |
+| ----- | ----------- | ------ | -------- |
+| replicas |  | *int32 | false |
+| deployPodDisruptionBudget |  | *bool | false |
+| imageRepository | ImageRepository allows users to specify the image registry to be used for CoreDNS. Kubeadm automatically appends `/coredns` at the end, so it's not necessary to specify it. By default it's empty, which means it'll be defaulted based on kubeadm defaults and if overwriteRegistry feature is used. ImageRepository has the highest priority, meaning that it'll override overwriteRegistry if specified. | string | false |
 
 [Back to Group](#v1beta2)
 
@@ -355,6 +376,7 @@ Features controls what features will be enabled on the cluster
 
 | Field | Description | Scheme | Required |
 | ----- | ----------- | ------ | -------- |
+| coreDNS | CoreDNS | *[CoreDNS](#coredns) | false |
 | podNodeSelector | PodNodeSelector | *[PodNodeSelector](#podnodeselector) | false |
 | podSecurityPolicy | PodSecurityPolicy Deprecated: will be removed once Kubernetes 1.24 reaches EOL | *[PodSecurityPolicy](#podsecuritypolicy) | false |
 | staticAuditLog | StaticAuditLog | *[StaticAuditLog](#staticauditlog) | false |
@@ -362,6 +384,7 @@ Features controls what features will be enabled on the cluster
 | metricsServer | MetricsServer | *[MetricsServer](#metricsserver) | false |
 | openidConnect | OpenIDConnect | *[OpenIDConnect](#openidconnect) | false |
 | encryptionProviders | Encryption Providers | *[EncryptionProviders](#encryptionproviders) | false |
+| nodeLocalDNS | NodeLocalDNS config | *[NodeLocalDNS](#nodelocaldns) | false |
 
 [Back to Group](#v1beta2)
 
@@ -391,14 +414,17 @@ HostConfig describes a single control plane node.
 | Field | Description | Scheme | Required |
 | ----- | ----------- | ------ | -------- |
 | publicAddress | PublicAddress is externally accessible IP address from public internet. | string | true |
+| ipv6Addresses | IPv6Addresses is IPv6 addresses of the node, only the first one will be announced to the k8s control plane. It is a list because you can request lots of IPv6 addresses (for example in case you want to assign one address per service). | []string | true |
 | privateAddress | PrivateAddress is internal RFC-1918 IP address. | string | true |
 | sshPort | SSHPort is port to connect ssh to. Default value is 22. | int | false |
 | sshUsername | SSHUsername is system login name. Default value is \"root\". | string | false |
 | sshPrivateKeyFile | SSHPrivateKeyFile is path to the file with PRIVATE AND CLEANTEXT ssh key. Default value is \"\". | string | false |
+| sshHostPublicKey | SSHHostPublicKey if not empty, will be used to verify remote host public key | []byte | false |
 | sshAgentSocket | SSHAgentSocket path (or reference to the environment) to the SSH agent unix domain socket. Default value is \"env:SSH_AUTH_SOCK\". | string | false |
 | bastion | Bastion is an IP or hostname of the bastion (or jump) host to connect to. Default value is \"\". | string | false |
 | bastionPort | BastionPort is SSH port to use when connecting to the bastion if it's configured in .Bastion. Default value is 22. | int | false |
 | bastionUser | BastionUser is system login name to use when connecting to bastion host. Default value is \"root\". | string | false |
+| bastionHostPublicKey | BastionHostPublicKey if not empty, will be used to verify bastion SSH public key | []byte | false |
 | hostname | Hostname is the hostname(1) of the host. Default value is populated at the runtime via running `hostname -f` command over ssh. | string | false |
 | isLeader | IsLeader indicates this host as a session leader. Default value is populated at the runtime. | bool | false |
 | taints | Taints are taints applied to nodes. Those taints are only applied when the node is being provisioned. If not provided (i.e. nil) for control plane nodes, it defaults to:\n  * For Kubernetes 1.23 and older: TaintEffectNoSchedule with key node-role.kubernetes.io/master\n  * For Kubernetes 1.24 and newer: TaintEffectNoSchedule with keys\n    node-role.kubernetes.io/control-plane and node-role.kubernetes.io/master\nExplicitly empty (i.e. []corev1.Taint{}) means no taints will be applied (this is default for worker nodes). | [][corev1.Taint](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#taint-v1-core) | false |
@@ -460,6 +486,7 @@ KubeOneCluster is KubeOne Cluster API Schema
 | staticWorkers | StaticWorkers describes the worker nodes that are managed by KubeOne/kubeadm. | [StaticWorkersConfig](#staticworkersconfig) | false |
 | dynamicWorkers | DynamicWorkers describes the worker nodes that are managed by Kubermatic machine-controller/Cluster-API. | [][DynamicWorkerConfig](#dynamicworkerconfig) | false |
 | machineController | MachineController configures the Kubermatic machine-controller component. | *[MachineControllerConfig](#machinecontrollerconfig) | false |
+| operatingSystemManager | OperatingSystemManager configures the Kubermatic operating-system-manager component. | *[OperatingSystemManagerConfig](#operatingsystemmanagerconfig) | false |
 | caBundle | CABundle PEM encoded global CA | string | false |
 | features | Features enables and configures additional cluster features. | [Features](#features) | false |
 | addons | Addons are used to deploy additional manifests. | *[Addons](#addons) | false |
@@ -525,6 +552,16 @@ MetricsServer feature flag
 
 [Back to Group](#v1beta2)
 
+### NodeLocalDNS
+
+
+
+| Field | Description | Scheme | Required |
+| ----- | ----------- | ------ | -------- |
+| deploy | Deploy is enabled by default | bool | false |
+
+[Back to Group](#v1beta2)
+
 ### NoneSpec
 
 NoneSpec defines a none provider
@@ -578,6 +615,16 @@ OpenstackSpec defines the Openstack provider
 
 | Field | Description | Scheme | Required |
 | ----- | ----------- | ------ | -------- |
+
+[Back to Group](#v1beta2)
+
+### OperatingSystemManagerConfig
+
+OperatingSystemManagerConfig configures kubermatic operating-system-manager deployment.
+
+| Field | Description | Scheme | Required |
+| ----- | ----------- | ------ | -------- |
+| deploy | Deploy | bool | false |
 
 [Back to Group](#v1beta2)
 
@@ -644,6 +691,7 @@ ProviderStaticNetworkConfig contains a machine's static network configuration
 | cidr | CIDR | string | true |
 | gateway | Gateway | string | true |
 | dns | DNS | [DNSConfig](#dnsconfig) | true |
+| ipFamily | IPFamily | IPFamily | true |
 
 [Back to Group](#v1beta2)
 

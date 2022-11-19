@@ -69,6 +69,7 @@ var (
 		resources.AddonMachineController:      "",
 		resources.AddonMetricsServer:          "",
 		resources.AddonNodeLocalDNS:           "",
+		resources.AddonOperatingSystemManager: "",
 	}
 
 	greaterThan23 = semverutil.MustParseConstraint(greaterThan23Constraint)
@@ -81,6 +82,12 @@ type addonAction struct {
 
 //nolint:nakedret
 func collectAddons(s *state.State) (addonsToDeploy []addonAction) {
+	if *s.Cluster.Features.CoreDNS.DeployPodDisruptionBudget {
+		addonsToDeploy = append(addonsToDeploy, addonAction{
+			name: resources.AddonCoreDNSPDB,
+		})
+	}
+
 	if s.Cluster.Features.MetricsServer.Enable {
 		addonsToDeploy = append(addonsToDeploy, addonAction{
 			name: resources.AddonMetricsServer,
@@ -111,13 +118,21 @@ func collectAddons(s *state.State) (addonsToDeploy []addonAction) {
 		})
 	}
 
-	addonsToDeploy = append(addonsToDeploy, addonAction{
-		name: resources.AddonNodeLocalDNS,
-	})
+	if s.Cluster.Features.NodeLocalDNS.Deploy {
+		addonsToDeploy = append(addonsToDeploy, addonAction{
+			name: resources.AddonNodeLocalDNS,
+		})
+	}
 
 	if s.Cluster.MachineController.Deploy {
 		addonsToDeploy = append(addonsToDeploy, addonAction{
 			name: resources.AddonMachineController,
+		})
+	}
+
+	if s.Cluster.OperatingSystemManager.Deploy {
+		addonsToDeploy = append(addonsToDeploy, addonAction{
+			name: resources.AddonOperatingSystemManager,
 		})
 	}
 
@@ -128,6 +143,16 @@ func collectAddons(s *state.State) (addonsToDeploy []addonAction) {
 	}
 
 	return
+}
+
+func cleanupAddons(s *state.State) error {
+	if !*s.Cluster.Features.CoreDNS.DeployPodDisruptionBudget {
+		if err := DeleteAddonByName(s, resources.AddonCoreDNSPDB); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func Ensure(s *state.State) error {
@@ -142,6 +167,10 @@ func Ensure(s *state.State) error {
 		if err := EnsureAddonByName(s, add.name); err != nil {
 			return err
 		}
+	}
+
+	if err := cleanupAddons(s); err != nil {
+		return err
 	}
 
 	return nil
@@ -185,7 +214,7 @@ func EnsureUserAddons(s *state.State) error {
 		}
 
 		if embeddedAddon.Delete {
-			if err := applier.loadAndDeleteAddon(s, applier.EmbededFS, embeddedAddon.Name); err != nil {
+			if err := applier.loadAndDeleteAddon(s, applier.EmbeddedFS, embeddedAddon.Name); err != nil {
 				return err
 			}
 
@@ -250,7 +279,7 @@ func EnsureAddonByName(s *state.State, addonName string) error {
 		}
 	}
 
-	addons, eErr := fs.ReadDir(applier.EmbededFS, ".")
+	addons, eErr := fs.ReadDir(applier.EmbeddedFS, ".")
 	if eErr != nil {
 		return fail.Runtime(eErr, "reading embedded addons directory")
 	}
@@ -260,7 +289,7 @@ func EnsureAddonByName(s *state.State, addonName string) error {
 			continue
 		}
 		if a.Name() == addonName {
-			if err := applier.loadAndApplyAddon(s, applier.EmbededFS, a.Name()); err != nil {
+			if err := applier.loadAndApplyAddon(s, applier.EmbeddedFS, a.Name()); err != nil {
 				return err
 			}
 
@@ -305,7 +334,7 @@ func DeleteAddonByName(s *state.State, addonName string) error {
 		}
 	}
 
-	addons, eErr := fs.ReadDir(applier.EmbededFS, ".")
+	addons, eErr := fs.ReadDir(applier.EmbeddedFS, ".")
 	if eErr != nil {
 		return fail.Runtime(eErr, "reading embedded addons directory")
 	}
@@ -315,7 +344,7 @@ func DeleteAddonByName(s *state.State, addonName string) error {
 			continue
 		}
 		if a.Name() == addonName {
-			if err := applier.loadAndDeleteAddon(s, applier.EmbededFS, a.Name()); err != nil {
+			if err := applier.loadAndDeleteAddon(s, applier.EmbeddedFS, a.Name()); err != nil {
 				return err
 			}
 
@@ -345,6 +374,9 @@ func ensureCSIAddons(s *state.State, addonsToDeploy []addonAction) []addonAction
 		addonsToDeploy = append(addonsToDeploy,
 			addonAction{
 				name: resources.AddonCSIAwsEBS,
+				supportFn: func() error {
+					return migrateAWSCSIDriver(s)
+				},
 			},
 		)
 	// CSI driver is required for k8s v1.23+
@@ -407,6 +439,9 @@ func ensureCSIAddons(s *state.State, addonsToDeploy []addonAction) []addonAction
 		addonsToDeploy = append(addonsToDeploy,
 			addonAction{
 				name: resources.AddonCSIVsphere,
+				supportFn: func() error {
+					return removeCSIVsphereFromKubeSystem(s)
+				},
 			},
 		)
 	default:

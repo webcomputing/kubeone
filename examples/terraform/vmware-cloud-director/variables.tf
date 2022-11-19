@@ -83,6 +83,18 @@ variable "ssh_agent_socket" {
   type        = string
 }
 
+variable "ssh_hosts_keys" {
+  default     = null
+  description = "A list of SSH hosts public keys to verify"
+  type        = list(string)
+}
+
+variable "bastion_host_key" {
+  description = "Bastion SSH host public key"
+  default     = null
+  type        = string
+}
+
 variable "catalog_name" {
   description = "Name of catalog that contains vApp templates"
   type        = string
@@ -201,7 +213,7 @@ EOF
 }
 
 variable "initial_machinedeployment_replicas" {
-  default     = 1
+  default     = 2
   description = "number of replicas per MachineDeployment"
   type        = number
 }
@@ -237,9 +249,9 @@ variable "worker_cpu_cores" {
   type        = number
 }
 
-variable "worker_disk_size" {
-  description = "Disk size for worker VMs in MB"
-  default     = 25600 # 25 GiB
+variable "worker_disk_size_gb" {
+  description = "Disk size for worker VMs in GB"
+  default     = 25
   type        = number
 }
 
@@ -253,7 +265,7 @@ variable "initial_machinedeployment_operating_system_profile" {
   default     = ""
   type        = string
   description = <<EOF
-Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.
+Name of operating system profile for MachineDeployments, only applicable if operating-system-manager addon is enabled.
 If not specified, the default value will be added by machine-controller addon.
 EOF
 }

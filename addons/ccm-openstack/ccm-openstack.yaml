@@ -163,8 +163,8 @@ spec:
   template:
     metadata:
       annotations:
-         "caBundle-hash": "{{ .Config.CABundle | sha256sum }}"
-         "cloudConfig-hash": "{{ .Config.CloudProvider.CloudConfig | sha256sum }}"
+        "kubeone.k8c.io/cabundle-hash": "{{ .Config.CABundle | sha256sum }}"
+        "kubeone.k8c.io/cloudconfig-hash": "{{ .Config.CloudProvider.CloudConfig | sha256sum }}"
       labels:
         k8s-app: "openstack-cloud-controller-manager"
     spec:
@@ -206,6 +206,9 @@ spec:
             - mountPath: /etc/ssl/certs
               name: ca-certs
               readOnly: true
+            - mountPath: /etc/pki
+              name: pki-certs
+              readOnly: true
             - mountPath: /usr/share/ca-certificates
               name: usr-ca-certs
               readOnly: true
@@ -227,6 +230,10 @@ spec:
       - name: ca-certs
         hostPath:
           path: /etc/ssl/certs
+          type: DirectoryOrCreate
+      - name: pki-certs
+        hostPath:
+          path: /etc/pki
           type: DirectoryOrCreate
       - hostPath:
           path: /usr/share/ca-certificates

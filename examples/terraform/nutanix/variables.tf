@@ -82,6 +82,18 @@ variable "bastion_user" {
   type        = string
 }
 
+variable "ssh_hosts_keys" {
+  default     = null
+  description = "A list of SSH hosts public keys to verify"
+  type        = list(string)
+}
+
+variable "bastion_host_key" {
+  description = "Bastion SSH host public key"
+  default     = null
+  type        = string
+}
+
 # Provider specific settings
 
 variable "nutanix_cluster_name" {
@@ -177,7 +189,7 @@ variable "worker_disk_size" {
 }
 
 variable "initial_machinedeployment_replicas" {
-  default     = 1
+  default     = 2
   description = "number of replicas per MachineDeployment"
   type        = number
 }
@@ -186,7 +198,7 @@ variable "initial_machinedeployment_operating_system_profile" {
   default     = ""
   type        = string
   description = <<EOF
-Name of operating system profile for MachineDeployments, only applicable if operatng-system-manager addon is enabled.
+Name of operating system profile for MachineDeployments, only applicable if operating-system-manager addon is enabled.
 If not specified, the default value will be added by machine-controller addon.
 EOF
 }
